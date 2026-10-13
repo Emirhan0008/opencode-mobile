@@ -57,6 +57,10 @@ class Api(baseUrl: String, private val token: String) {
         execute(builder(path).post(payload).build())
     }
 
+    suspend fun delete(path: String): JsonElement = withContext(Dispatchers.IO) {
+        execute(builder(path).delete().build())
+    }
+
     private fun execute(request: Request): JsonElement {
         client.newCall(request).execute().use { res ->
             val text = res.body?.string().orEmpty()
@@ -100,6 +104,48 @@ class Api(baseUrl: String, private val token: String) {
             buildJsonObject { put("decision", decision) },
         )
     }
+
+    // ------------------------------------------------------------- agent / model
+
+    suspend fun agents(): List<JsonObject> =
+        get("/api/agent").obj().arr("data").map { it.obj() }
+
+    suspend fun models(): List<JsonObject> =
+        get("/api/model").obj().arr("data").map { it.obj() }
+
+    /** Oturumun ajanını (build / plan / özel) değiştirir. */
+    suspend fun switchAgent(id: String, agent: String): JsonElement =
+        post("/api/session/$id/agent", buildJsonObject { put("agent", agent) })
+
+    /** Oturumun modelini değiştirir. */
+    suspend fun switchModel(id: String, providerID: String, modelID: String, variant: String? = null): JsonElement =
+        post(
+            "/api/session/$id/model",
+            buildJsonObject {
+                put(
+                    "model",
+                    buildJsonObject {
+                        put("id", modelID)
+                        put("providerID", providerID)
+                        if (!variant.isNullOrBlank()) put("variant", variant)
+                    },
+                )
+            },
+        )
+
+    // -------------------------------------------------------------------- forms
+
+    /** Bekleyen formlar (question aracı soruları). */
+    suspend fun forms(id: String): List<JsonObject> =
+        get("/api/session/$id/form").obj().arr("data").map { it.obj() }
+
+    /** Formu (soruyu) yanıtla; answer: alan adı → değer. */
+    suspend fun replyForm(sessionID: String, formID: String, answer: JsonObject): JsonElement =
+        post("/api/session/$sessionID/form/$formID/reply", buildJsonObject { put("answer", answer) })
+
+    /** Formu (soruyu) iptal et — aracı da iptal eder. */
+    suspend fun cancelForm(sessionID: String, formID: String): JsonElement =
+        delete("/api/session/$sessionID/form/$formID")
 
     // --------------------------------------------------------------------- SSE
 
@@ -172,3 +218,4 @@ fun JsonObject.arr(key: String): List<JsonElement> = (this[key] as? JsonArray)?.
 fun JsonObject.obj(key: String): JsonObject = (this[key] as? JsonObject) ?: JsonObject(emptyMap())
 fun JsonObject.str(key: String): String? = (this[key] as? JsonPrimitive)?.contentOrNull
 fun JsonObject.num(key: String): Double? = (this[key] as? JsonPrimitive)?.doubleOrNull
+fun JsonElement?.text(): String? = (this as? JsonPrimitive)?.contentOrNull

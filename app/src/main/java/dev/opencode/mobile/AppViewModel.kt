@@ -1,25 +1,30 @@
 package dev.opencode.mobile
 
 import android.content.Context
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import dev.opencode.mobile.data.Settings
 import dev.opencode.mobile.net.Api
-import dev.opencode.mobile.net.ApiException
 import dev.opencode.mobile.net.OcEvent
 import dev.opencode.mobile.net.arr
 import dev.opencode.mobile.net.num
 import dev.opencode.mobile.net.obj
 import dev.opencode.mobile.net.str
-import kotlinx.coroutines.Dispatchers
+import dev.opencode.mobile.net.text
+import dev.opencode.mobile.notify.Notifier
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import okhttp3.Call
 
 // ------------------------------------------------------------------- state
@@ -30,12 +35,13 @@ data class ToolRow(
     val status: String, // running | ok | error
     val input: String = "",
     val output: String = "",
+    val error: String = "",
 )
 
 data class LiveMessage(
     val id: String,
-    var reasoning: String = "",
-    var text: String = "",
+    val reasoning: String = "",
+    val text: String = "",
     val tools: List<ToolRow> = emptyList(),
 )
 
@@ -53,6 +59,7 @@ data class SessionState(
     val live: LiveMessage? = null,
     val busy: Boolean = false,
     val permissions: List<JsonObject> = emptyList(),
+    val forms: List<JsonObject> = emptyList(),
     val sending: Boolean = false,
     val error: String? = null,
 )
@@ -63,9 +70,17 @@ sealed interface Screen {
     data class Session(val id: String) : Screen
 }
 
+/** Uygulamanın ön planda olup olmadığı — bildirim buna göre gönderilir. */
+object AppVisibility {
+    var visible by mutableStateOf(true)
+}
+
 // ------------------------------------------------------------- view model
 
-class AppViewModel(private val settings: Settings) : ViewModel() {
+class AppViewModel(
+    private val appContext: Context,
+    private val settings: Settings,
+) : ViewModel() {
 
     private var api: Api? = null
     private var sseCall: Call? = null
@@ -85,6 +100,15 @@ class AppViewModel(private val settings: Settings) : ViewModel() {
     private val _globalPermissions = MutableStateFlow<List<JsonObject>>(emptyList())
     val globalPermissions: StateFlow<List<JsonObject>> = _globalPermissions.asStateFlow()
 
+    private val _agents = MutableStateFlow<List<JsonObject>>(emptyList())
+    val agents: StateFlow<List<JsonObject>> = _agents.asStateFlow()
+
+    private val _models = MutableStateFlow<List<JsonObject>>(emptyList())
+    val models: StateFlow<List<JsonObject>> = _models.asStateFlow()
+
+    private val _darkTheme = MutableStateFlow(true)
+    val darkTheme: StateFlow<Boolean> = _darkTheme.asStateFlow()
+
     init {
         viewModelScope.launch {
             settings.connection.collect { conn ->
@@ -98,6 +122,9 @@ class AppViewModel(private val settings: Settings) : ViewModel() {
                 }
             }
         }
+        viewModelScope.launch {
+            settings.darkTheme.collect { _darkTheme.value = it }
+        }
     }
 
     // ------------------------------------------------------------ connection
@@ -107,6 +134,8 @@ class AppViewModel(private val settings: Settings) : ViewModel() {
         api = Api(baseUrl, token)
         _connected.value = true
         subscribeEvents()
+        refreshAgents()
+        refreshModels()
         refreshSessions()
     }
 
@@ -147,6 +176,11 @@ class AppViewModel(private val settings: Settings) : ViewModel() {
         }
     }
 
+    fun setDarkTheme(dark: Boolean) {
+        _darkTheme.value = dark
+        viewModelScope.launch { settings.setDarkTheme(dark) }
+    }
+
     // ----------------------------------------------------------------- SSE
 
     private fun subscribeEvents() {
@@ -171,92 +205,169 @@ class AppViewModel(private val settings: Settings) : ViewModel() {
         when (ev.type) {
             "session.execution.started" -> {
                 if (sid != null) _sessions.update { it.copy(active = it.active + sid) }
-                if (sid == currentSessionId()) {
-                    _session.update { it.copy(busy = true) }
-                }
+                if (sid == currentSessionId()) _session.update { it.copy(busy = true) }
             }
 
-            "session.execution.succeeded", "session.idle" -> finishSession(sid)
-            "session.execution.failed", "session.execution.interrupted" -> finishSession(sid)
+            // 2.x'te bitiş olayları: idle / failed (execution.succeeded yok)
+            "session.idle", "session.execution.failed" -> finishSession(sid)
+
+            "session.text.started" -> ensureLive(d)
 
             "session.text.delta" -> {
                 if (sid != currentSessionId()) return
                 val mid = d.str("assistantMessageID") ?: return
                 _session.update { st ->
-                    val live = (st.live ?: LiveMessage(mid)).apply { text += d.str("delta").orEmpty() }
+                    val live = (st.live ?: LiveMessage(mid)).copy(text = st.live?.text.orEmpty() + d.str("delta").orEmpty())
                     st.copy(live = live)
                 }
             }
+
+            "session.reasoning.started" -> ensureLive(d)
 
             "session.reasoning.delta" -> {
                 if (sid != currentSessionId()) return
                 val mid = d.str("assistantMessageID") ?: return
                 _session.update { st ->
-                    val live = (st.live ?: LiveMessage(mid)).apply { reasoning += d.str("delta").orEmpty() }
+                    val live = (st.live ?: LiveMessage(mid))
+                        .copy(reasoning = st.live?.reasoning.orEmpty() + d.str("delta").orEmpty())
                     st.copy(live = live)
                 }
             }
 
             "session.tool.input.started" -> {
                 if (sid != currentSessionId()) return
-                upsertTool(d.str("id").orEmpty(), d.str("name") ?: "tool", "running")
+                upsertTool(d) { it.copy(name = d.str("name") ?: it.name, status = "running") }
+            }
+
+            "session.tool.input.delta" -> {
+                if (sid != currentSessionId()) return
+                upsertTool(d) { it.copy(input = it.input + (d.str("delta") ?: d.str("text").orEmpty())) }
+            }
+
+            "session.tool.input.ended" -> {
+                if (sid != currentSessionId()) return
+                upsertTool(d) { it.copy(input = d.str("text") ?: it.input) }
             }
 
             "session.tool.called" -> {
                 if (sid != currentSessionId()) return
-                upsertTool(d.str("id").orEmpty(), null, "running")
+                upsertTool(d) {
+                    it.copy(
+                        status = "running",
+                        input = d.obj("input").toString().takeIf { s -> s != "{}" } ?: it.input,
+                    )
+                }
             }
+
+            "session.tool.progress" -> Unit
 
             "session.tool.success" -> {
                 if (sid != currentSessionId()) return
-                upsertTool(d.str("id").orEmpty(), null, "ok")
+                upsertTool(d) {
+                    it.copy(status = "ok", output = toolContent(d) ?: it.output)
+                }
             }
 
             "session.tool.failed" -> {
                 if (sid != currentSessionId()) return
-                upsertTool(d.str("id").orEmpty(), null, "error")
+                upsertTool(d) {
+                    val msg = d.obj("error").str("message") ?: d.str("error") ?: "hata"
+                    it.copy(status = "error", error = msg, output = toolContent(d) ?: it.output)
+                }
             }
 
             "permission.asked" -> {
-                val req = d
+                val req = unwrap(d, "request")
                 _globalPermissions.update { list -> list + req }
                 if (sid == currentSessionId()) {
                     _session.update { it.copy(permissions = it.permissions + req) }
                 }
+                if (!AppVisibility.visible) {
+                    val action = req.str("action") ?: "izin"
+                    val res = req.arr("resources").mapNotNull { it.text() }.take(3)
+                    notify(req.str("id").hashCode(), "İzin isteği", (listOf(action) + res).joinToString("\n"))
+                }
             }
 
             "permission.replied" -> {
-                val rid = d.str("requestID")
+                val rid = d.str("requestID") ?: d.str("id")
                 _globalPermissions.update { list -> list.filterNot { it.str("id") == rid } }
                 _session.update { it.copy(permissions = it.permissions.filterNot { p -> p.str("id") == rid }) }
+            }
+
+            "form.created" -> {
+                val form = unwrap(d, "form")
+                val fid = form.str("id") ?: return
+                if (sid == currentSessionId()) {
+                    _session.update { st ->
+                        st.copy(forms = st.forms.filterNot { it.str("id") == fid } + form)
+                    }
+                }
+                if (!AppVisibility.visible) {
+                    notify(fid.hashCode(), "Soru bekliyor", form.str("title") ?: "Bir soru yanıtı bekliyor")
+                }
+            }
+
+            "form.replied", "form.cancelled" -> {
+                val fid = d.str("id") ?: d.obj("form").str("id") ?: return
+                _session.update { st -> st.copy(forms = st.forms.filterNot { it.str("id") == fid }) }
             }
 
             else -> Unit
         }
     }
 
-    private fun upsertTool(toolID: String, name: String?, status: String) {
+    /** Bazı olaylar nesneyi doğrudan, bazıları sarmalı (`{form: …}` / `{request: …}`) taşır. */
+    private fun unwrap(d: JsonObject, key: String): JsonObject =
+        if (d.str("id") != null && (key != "form" || d.arr("fields").isNotEmpty())) d else d.obj(key)
+
+    private fun toolContent(d: JsonObject): String? {
+        val content = d.arr("content")
+        if (content.isEmpty()) return null
+        return content.joinToString("\n") { it.obj().str("text").orEmpty() }.trim().ifBlank { null }
+    }
+
+    private fun ensureLive(d: JsonObject) {
+        if (d.str("sessionID") != currentSessionId()) return
+        val mid = d.str("assistantMessageID") ?: return
+        _session.update { st -> st.copy(live = st.live ?: LiveMessage(mid)) }
+    }
+
+    private fun toolId(d: JsonObject): String =
+        d.str("id") ?: d.str("toolCallID") ?: d.str("toolID").orEmpty()
+
+    private fun upsertTool(d: JsonObject, change: (ToolRow) -> ToolRow) {
+        val toolID = toolId(d)
         if (toolID.isEmpty()) return
         _session.update { st ->
-            val live = st.live ?: LiveMessage(id = "live")
+            val live = st.live ?: LiveMessage(id = d.str("assistantMessageID") ?: "live")
             val tools = live.tools.toMutableList()
             val idx = tools.indexOfFirst { it.id == toolID }
             if (idx >= 0) {
-                val old = tools[idx]
-                tools[idx] = old.copy(name = name ?: old.name, status = status)
+                tools[idx] = change(tools[idx])
             } else {
-                tools.add(ToolRow(id = toolID, name = name ?: "tool", status = status))
+                tools.add(change(ToolRow(id = toolID, name = d.str("name") ?: "tool", status = "running")))
             }
             st.copy(live = live.copy(tools = tools))
         }
     }
 
     private fun finishSession(sid: String?) {
+        val wasBusy = sid != null && _sessions.value.active.contains(sid)
         if (sid != null) _sessions.update { it.copy(active = it.active - sid) }
         if (sid == currentSessionId()) {
             _session.update { it.copy(busy = false) }
             viewModelScope.launch { refreshMessages() }
         }
+        if (wasBusy && !AppVisibility.visible && sid != null) {
+            val title = _sessions.value.sessions.firstOrNull { it.str("id") == sid }?.str("title")
+                ?.ifBlank { null } ?: "oturum"
+            notify(sid.hashCode(), "Görev tamamlandı", title)
+        }
+    }
+
+    private fun notify(id: Int, title: String, text: String) {
+        runCatching { Notifier.notify(appContext, id, title, text) }
     }
 
     private fun currentSessionId(): String? = (_screen.value as? Screen.Session)?.id
@@ -300,6 +411,7 @@ class AppViewModel(private val settings: Settings) : ViewModel() {
                 val msgs = current.messages(id)
                 val perms = runCatching { current.pendingPermissions() }.getOrDefault(emptyList())
                     .filter { it.str("sessionID") == id }
+                val forms = runCatching { current.forms(id) }.getOrDefault(emptyList())
                 _session.update {
                     SessionState(
                         loading = false,
@@ -307,6 +419,7 @@ class AppViewModel(private val settings: Settings) : ViewModel() {
                         messages = msgs,
                         busy = _sessions.value.active.contains(id),
                         permissions = perms,
+                        forms = forms,
                     )
                 }
             } catch (e: Exception) {
@@ -322,7 +435,8 @@ class AppViewModel(private val settings: Settings) : ViewModel() {
             try {
                 val msgs = current.messages(id)
                 val info = current.session(id)
-                _session.update { it.copy(messages = msgs, session = info, live = null) }
+                val forms = runCatching { current.forms(id) }.getOrDefault(emptyList())
+                _session.update { it.copy(messages = msgs, session = info, forms = forms, live = null) }
             } catch (_: Exception) {
             }
         }
@@ -352,6 +466,85 @@ class AppViewModel(private val settings: Settings) : ViewModel() {
         }
     }
 
+    // ----------------------------------------------------- agent / model / form
+
+    private fun refreshAgents() {
+        val current = api ?: return
+        viewModelScope.launch {
+            runCatching { current.agents() }.onSuccess { list -> _agents.value = list }
+        }
+    }
+
+    private fun refreshModels() {
+        val current = api ?: return
+        viewModelScope.launch {
+            runCatching { current.models() }.onSuccess { list -> _models.value = list }
+        }
+    }
+
+    /** Oturumun ajanını (build / plan / özel) değiştirir. */
+    fun switchAgent(agent: String) {
+        val current = api ?: return
+        val id = currentSessionId() ?: return
+        viewModelScope.launch {
+            runCatching { current.switchAgent(id, agent) }
+            _session.update { st ->
+                st.copy(session = st.session?.let { s ->
+                    kotlinx.serialization.json.buildJsonObject {
+                        for ((k, v) in s) put(k, v)
+                        put("agent", kotlinx.serialization.json.JsonPrimitive(agent))
+                    }
+                })
+            }
+        }
+    }
+
+    /** Oturumun modelini değiştirir. */
+    fun switchModel(providerID: String, modelID: String, variant: String? = null) {
+        val current = api ?: return
+        val id = currentSessionId() ?: return
+        viewModelScope.launch {
+            runCatching { current.switchModel(id, providerID, modelID, variant) }
+            _session.update { st ->
+                st.copy(session = st.session?.let { s ->
+                    kotlinx.serialization.json.buildJsonObject {
+                        for ((k, v) in s) if (k != "model") put(k, v)
+                        put(
+                            "model",
+                            kotlinx.serialization.json.buildJsonObject {
+                                put("id", modelID)
+                                put("providerID", providerID)
+                                if (variant != null) put("variant", variant)
+                            },
+                        )
+                    }
+                })
+            }
+        }
+    }
+
+    /** Soru formunu yanıtla. answer: alan adı → değer. */
+    fun replyForm(formID: String, answer: JsonObject) {
+        val current = api ?: return
+        val id = currentSessionId() ?: return
+        viewModelScope.launch {
+            runCatching { current.replyForm(id, formID, answer) }
+            _session.update { st -> st.copy(forms = st.forms.filterNot { it.str("id") == formID }) }
+        }
+    }
+
+    /** Soru formunu iptal et. */
+    fun cancelForm(formID: String) {
+        val current = api ?: return
+        val id = currentSessionId() ?: return
+        viewModelScope.launch {
+            runCatching { current.cancelForm(id, formID) }
+            _session.update { st -> st.copy(forms = st.forms.filterNot { it.str("id") == formID }) }
+        }
+    }
+
+    // -------------------------------------------------------------- izinler
+
     fun replyPermission(sessionID: String, requestID: String, decision: String) {
         val current = api ?: return
         viewModelScope.launch {
@@ -366,8 +559,10 @@ class AppViewModel(private val settings: Settings) : ViewModel() {
 
     class Factory(private val context: Context) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
-        override fun <T : ViewModel> create(modelClass: Class<T>): T =
-            AppViewModel(Settings(context.applicationContext)) as T
+        override fun <T : ViewModel> create(modelClass: Class<T>): T {
+            val app = context.applicationContext
+            return AppViewModel(app, Settings(app)) as T
+        }
     }
 }
 

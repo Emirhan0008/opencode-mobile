@@ -1,5 +1,8 @@
 package dev.opencode.mobile
 
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -9,6 +12,9 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.platform.LocalContext
+import androidx.core.app.ActivityCompat
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
 import dev.opencode.mobile.ui.ConnectScreen
 import dev.opencode.mobile.ui.OpenCodeTheme
@@ -16,23 +22,50 @@ import dev.opencode.mobile.ui.SessionScreen
 import dev.opencode.mobile.ui.SessionsScreen
 
 class MainActivity : ComponentActivity() {
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        requestNotificationPermission()
         setContent {
-            OpenCodeTheme {
-                Root()
+            val vm: AppViewModel = viewModel(factory = AppViewModel.Factory(LocalContext.current))
+            val dark by vm.darkTheme.collectAsState()
+            OpenCodeTheme(dark = dark) {
+                Root(vm, dark)
             }
+        }
+    }
+
+    override fun onStart() {
+        super.onStart()
+        AppVisibility.visible = true
+    }
+
+    override fun onStop() {
+        super.onStop()
+        AppVisibility.visible = false
+    }
+
+    private fun requestNotificationPermission() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            ActivityCompat.requestPermissions(
+                this,
+                arrayOf(Manifest.permission.POST_NOTIFICATIONS),
+                1001,
+            )
         }
     }
 }
 
 @Composable
-private fun Root() {
-    val vm: AppViewModel = viewModel(factory = AppViewModel.Factory(androidx.compose.ui.platform.LocalContext.current))
-
+private fun Root(vm: AppViewModel, dark: Boolean) {
     val screen by vm.screen.collectAsState()
     val sessions by vm.sessions.collectAsState()
     val session by vm.session.collectAsState()
+    val agents by vm.agents.collectAsState()
+    val models by vm.models.collectAsState()
     val globalPermissions by vm.globalPermissions.collectAsState()
     var connectError by remember { mutableStateOf<String?>(null) }
     var connecting by remember { mutableStateOf(false) }
@@ -62,6 +95,8 @@ private fun Root() {
         Screen.Sessions -> SessionsScreen(
             state = sessions,
             permissionCount = globalPermissions.size,
+            darkTheme = dark,
+            onToggleTheme = { vm.setDarkTheme(!dark) },
             onRefresh = vm::refreshSessions,
             onOpen = vm::openSession,
             onNew = { title, dir ->
@@ -72,10 +107,18 @@ private fun Root() {
 
         is Screen.Session -> SessionScreen(
             state = session,
+            agents = agents,
+            models = models,
             onBack = vm::goBack,
             onSend = vm::sendPrompt,
             onInterrupt = vm::interrupt,
             onPermission = vm::replyPermission,
+            onSwitchAgent = vm::switchAgent,
+            onSwitchModel = { providerID, modelID, variant ->
+                vm.switchModel(providerID, modelID, variant)
+            },
+            onReplyForm = vm::replyForm,
+            onCancelForm = vm::cancelForm,
         )
     }
 }

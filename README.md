@@ -1,5 +1,7 @@
 # OpenCode Mobile (Android / Kotlin)
 
+<p align="center"><img src="docs/icon-512.png" width="120" alt="OpenCode Mobile" /></p>
+
 Bilgisayarınızda çalışan OpenCode'a telefondan bağlanan yerel Android uygulaması.
 TUI estetiğinde: koyu zemin, monospace yazılar, kutulu paneller.
 
@@ -8,11 +10,17 @@ TUI estetiğinde: koyu zemin, monospace yazılar, kutulu paneller.
 - **Bağlantı**: `opencode pair` / `opencode pair --remote` ile verilen bağlantıyı yapıştırın —
   uygulama sunucu adresini ve kodu otomatik ayrıştırır, token'ı alır.
   Aynı Wi-Fi şart değildir; OpenTunnel adresi uzaktan erişim için yeterlidir.
-- **Session listesi**: başlık, dizin, güncelleme zamanı, maliyet, çalışır durum göstergesi.
+- **Session listesi**: başlık, dizin, güncelleme zamanı, maliyet, çalışır durum göstergesi;
+  başlık/dizin araması ve *tümü / aktif / son 24s* filtresi.
 - **Mesaj akışı**: kullanıcı/assistant mesajları, katlanabilir "düşünme" (reasoning) blokları,
   araç (tool) kartları — girdi/çıktı ayrıntısıyla, canlı akış sırasında da.
 - **Prompt girişi**: mesaj yazın, yanıt canlı aksın; çalışan görevi durdurma düğmesi.
+- **Ajan & model seçimi**: oturum için ajan (build/…) ve model değiştirme.
+- **Soru kartları**: `question` aracıdan gelen etkileşimli formlar (seçenekli/serbest yanıt)
+  doğrudan telefondan yanıtlanabilir.
 - **İzin onayları**: "İzin isteği" kartında *bir kez / her zaman / reddet* düğmeleri.
+- **Bildirimler**: uygulama arka plandayken izin isteği, soru ve görev bitişi bildirimleri.
+- **Tema**: koyu / açık tema anahtarı (kalıcı).
 
 ## Kimlik doğrulama
 

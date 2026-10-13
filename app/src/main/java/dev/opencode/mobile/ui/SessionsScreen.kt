@@ -1,5 +1,6 @@
 package dev.opencode.mobile.ui
 
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -20,7 +21,9 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
@@ -38,8 +41,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import dev.opencode.mobile.R
 import dev.opencode.mobile.SessionsState
 import dev.opencode.mobile.net.num
 import dev.opencode.mobile.net.obj
@@ -48,38 +53,99 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
+/** Liste filtresi: tümü / yalnızca çalışanlar / son 24 saat. */
+enum class SessionFilter(val label: String) {
+    ALL("tümü"),
+    ACTIVE("aktif"),
+    RECENT("son 24s"),
+}
+
 @Composable
 fun SessionsScreen(
     state: SessionsState,
     permissionCount: Int,
+    darkTheme: Boolean,
+    onToggleTheme: () -> Unit,
     onRefresh: () -> Unit,
     onOpen: (String) -> Unit,
     onNew: (title: String, directory: String) -> Unit,
     onDisconnect: () -> Unit,
 ) {
     var showNew by remember { mutableStateOf(false) }
+    var query by remember { mutableStateOf("") }
+    var filter by remember { mutableStateOf(SessionFilter.ALL) }
 
     Scaffold(
         containerColor = Oc.bg,
         topBar = {
-            Row(
+            Column(
                 modifier = Modifier
                     .fillMaxWidth()
                     .background(Oc.panel)
-                    .border(1.dp, Oc.border)
-                    .padding(horizontal = 12.dp, vertical = 10.dp),
-                verticalAlignment = Alignment.CenterVertically,
+                    .border(1.dp, Oc.border),
             ) {
-                Text("┌─ SESSIONS", style = MaterialTheme.typography.titleMedium)
-                Spacer(Modifier.weight(1f))
-                if (permissionCount > 0) {
-                    Text("🔐 $permissionCount", color = Oc.warn, style = MaterialTheme.typography.labelLarge)
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Image(
+                        painter = painterResource(R.drawable.ic_logo),
+                        contentDescription = "OpenCode Mobile",
+                        modifier = Modifier.size(28.dp),
+                    )
                     Spacer(Modifier.width(8.dp))
+                    Text("┌─ SESSIONS", style = MaterialTheme.typography.titleMedium)
+                    Spacer(Modifier.weight(1f))
+                    if (permissionCount > 0) {
+                        Text("🔐 $permissionCount", color = Oc.warn, style = MaterialTheme.typography.labelLarge)
+                        Spacer(Modifier.width(8.dp))
+                    }
+                    IconButton(onClick = onToggleTheme) {
+                        Text(if (darkTheme) "☀" else "☾", style = MaterialTheme.typography.labelLarge)
+                    }
+                    IconButton(onClick = onRefresh) {
+                        Icon(Icons.Default.Refresh, contentDescription = "yenile", tint = Oc.accent)
+                    }
+                    TextButton(onClick = onDisconnect) { Text("çıkış", color = Oc.dim) }
                 }
-                IconButton(onClick = onRefresh) {
-                    Icon(Icons.Default.Refresh, contentDescription = "yenile", tint = Oc.accent)
+
+                // ------------------------------------------------------- arama
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(Icons.Default.Search, contentDescription = null, tint = Oc.dim)
+                    Spacer(Modifier.width(6.dp))
+                    OutlinedTextField(
+                        value = query,
+                        onValueChange = { query = it },
+                        modifier = Modifier.weight(1f),
+                        singleLine = true,
+                        placeholder = { Text("başlık / dizin ara…", color = Oc.dim) },
+                        colors = ocFieldColors(),
+                    )
+                    if (query.isNotEmpty()) {
+                        IconButton(onClick = { query = "" }) {
+                            Icon(Icons.Default.Close, contentDescription = "temizle", tint = Oc.dim)
+                        }
+                    }
                 }
-                TextButton(onClick = onDisconnect) { Text("çıkış", color = Oc.dim) }
+
+                // ----------------------------------------------------- filtre
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    SessionFilter.entries.forEach { f ->
+                        FilterChipRow(f, selected = filter == f) { filter = f }
+                    }
+                }
             }
         },
         floatingActionButton = {
@@ -91,13 +157,37 @@ fun SessionsScreen(
         },
     ) { padding ->
         Box(Modifier.padding(padding).fillMaxSize()) {
+            val now = System.currentTimeMillis()
+            val visible = state.sessions.filter { s ->
+                val id = s.str("id").orEmpty()
+                val title = s.str("title").orEmpty()
+                val dir = s.obj("location").str("directory").orEmpty()
+                val matchesQuery = query.isBlank() ||
+                    title.contains(query, ignoreCase = true) ||
+                    dir.contains(query, ignoreCase = true) ||
+                    id.contains(query, ignoreCase = true)
+                val matchesFilter = when (filter) {
+                    SessionFilter.ALL -> true
+                    SessionFilter.ACTIVE -> state.active.contains(id)
+                    SessionFilter.RECENT -> {
+                        val updated = s.obj("time").num("updated") ?: s.obj("time").num("created") ?: 0.0
+                        now - updated.toLong() < 24L * 60 * 60 * 1000
+                    }
+                }
+                matchesQuery && matchesFilter
+            }
+
             when {
                 state.loading && state.sessions.isEmpty() ->
                     CircularProgressIndicator(color = Oc.accent, modifier = Modifier.align(Alignment.Center))
 
-                state.sessions.isEmpty() ->
+                visible.isEmpty() ->
                     Text(
-                        "Session yok. Sağ alttaki + ile yeni bir tane açın.",
+                        if (state.sessions.isEmpty()) {
+                            "Session yok. Sağ alttaki + ile yeni bir tane açın."
+                        } else {
+                            "Eşleşen session yok."
+                        },
                         color = Oc.dim,
                         modifier = Modifier.align(Alignment.Center),
                     )
@@ -109,7 +199,7 @@ fun SessionsScreen(
                     ),
                     verticalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
-                    items(state.sessions, key = { it.str("id").orEmpty() }) { s ->
+                    items(visible, key = { it.str("id").orEmpty() }) { s ->
                         SessionRow(
                             title = s.str("title")?.ifBlank { null } ?: "(başlıksız)",
                             directory = s.obj("location").str("directory") ?: "?",
@@ -137,6 +227,21 @@ fun SessionsScreen(
             }
         }
     }
+}
+
+@Composable
+private fun FilterChipRow(filter: SessionFilter, selected: Boolean, onClick: () -> Unit) {
+    Text(
+        filter.label,
+        color = if (selected) Oc.bg else Oc.dim,
+        style = MaterialTheme.typography.labelLarge,
+        modifier = Modifier
+            .clip(RoundedCornerShape(3.dp))
+            .background(if (selected) Oc.accent else Oc.panelAlt)
+            .border(1.dp, if (selected) Oc.accent else Oc.border, RoundedCornerShape(3.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 10.dp, vertical = 4.dp),
+    )
 }
 
 @Composable

@@ -1,17 +1,22 @@
 package dev.opencode.mobile.ui
 
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -23,6 +28,8 @@ import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Send
 import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -32,36 +39,53 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import dev.opencode.mobile.LiveMessage
+import dev.opencode.mobile.R
 import dev.opencode.mobile.SessionState
 import dev.opencode.mobile.ToolRow
 import dev.opencode.mobile.net.arr
 import dev.opencode.mobile.net.num
 import dev.opencode.mobile.net.obj
 import dev.opencode.mobile.net.str
+import dev.opencode.mobile.net.text
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonArray
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 
 @Composable
 fun SessionScreen(
     state: SessionState,
+    agents: List<JsonObject>,
+    models: List<JsonObject>,
     onBack: () -> Unit,
     onSend: (String) -> Unit,
     onInterrupt: () -> Unit,
     onPermission: (sessionID: String, requestID: String, decision: String) -> Unit,
+    onSwitchAgent: (String) -> Unit,
+    onSwitchModel: (providerID: String, modelID: String, variant: String?) -> Unit,
+    onReplyForm: (formID: String, answer: JsonObject) -> Unit,
+    onCancelForm: (formID: String) -> Unit,
 ) {
     var input by remember { mutableStateOf("") }
     val listState = rememberLazyListState()
 
-    LaunchedEffect(state.messages.size, state.live?.text?.length) {
-        val count = state.messages.size + (if (state.live != null) 1 else 0)
+    LaunchedEffect(state.messages.size, state.live?.text?.length, state.forms.size) {
+        val count = state.forms.size + state.messages.size + (if (state.live != null) 1 else 0)
         if (count > 0) listState.animateScrollToItem(count - 1)
     }
 
@@ -79,6 +103,12 @@ fun SessionScreen(
             IconButton(onClick = onBack) {
                 Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "geri", tint = Oc.text)
             }
+            Image(
+                painter = painterResource(R.drawable.ic_logo),
+                contentDescription = "OpenCode Mobile",
+                modifier = Modifier.size(24.dp),
+            )
+            Spacer(Modifier.width(8.dp))
             Column(Modifier.weight(1f)) {
                 Text(
                     state.session?.str("title")?.ifBlank { null } ?: state.session?.str("id") ?: "…",
@@ -90,18 +120,30 @@ fun SessionScreen(
                 Text(
                     buildString {
                         append(state.session?.obj("location")?.str("directory") ?: "?")
-                        val prov = model?.str("providerID")
-                        val mid = model?.str("id")
-                        if (prov != null || mid != null) {
-                            append("  ·  ").append(prov ?: "?").append('/').append(mid ?: "?")
-                        }
                         append("  ·  $").append("%.3f".format(state.session?.num("cost") ?: 0.0))
                     },
                     style = MaterialTheme.typography.labelSmall,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
+                Text(
+                    "${state.session?.str("agent") ?: "?"}  ·  ${model?.str("providerID") ?: "?"}/${model?.str("id") ?: "?"}",
+                    color = Oc.blue,
+                    style = MaterialTheme.typography.labelSmall,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
             }
+            AgentPicker(
+                current = state.session?.str("agent"),
+                agents = agents,
+                onPick = onSwitchAgent,
+            )
+            ModelPicker(
+                current = state.session?.obj("model"),
+                models = models,
+                onPick = onSwitchModel,
+            )
             if (state.busy) {
                 Text("⏳", modifier = Modifier.padding(end = 4.dp))
                 IconButton(onClick = onInterrupt) {
@@ -114,13 +156,17 @@ fun SessionScreen(
         LazyColumn(
             state = listState,
             modifier = Modifier.weight(1f).fillMaxWidth(),
-            contentPadding = androidx.compose.foundation.layout.PaddingValues(10.dp),
+            contentPadding = PaddingValues(10.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
+            items(state.forms, key = { "form-" + it.str("id") }) { form ->
+                FormCard(form, onReply = onReplyForm, onCancel = onCancelForm)
+            }
+
             items(state.permissions, key = { "perm-" + it.str("id") }) { req ->
                 PermissionCard(
                     action = req.str("action") ?: "?",
-                    resources = req.arr("resources").map { it.obj().str("path") ?: it.obj().str("uri") ?: it.toString() },
+                    resources = req.arr("resources").mapNotNull { it.text() },
                     message = req.str("message"),
                     onDecision = { decision ->
                         onPermission(req.str("sessionID").orEmpty(), req.str("id").orEmpty(), decision)
@@ -169,6 +215,89 @@ fun SessionScreen(
                 enabled = !state.sending && input.isNotBlank(),
             ) {
                 Icon(Icons.Default.Send, contentDescription = "gönder", tint = Oc.accent)
+            }
+        }
+    }
+}
+
+// ------------------------------------------------------------- agent / model
+
+@Composable
+private fun AgentPicker(current: String?, agents: List<JsonObject>, onPick: (String) -> Unit) {
+    var open by remember { mutableStateOf(false) }
+    val primary = agents.filter { it.str("mode") == "primary" }
+
+    Box {
+        Text(
+            current ?: "agent",
+            color = Oc.purple,
+            style = MaterialTheme.typography.labelLarge,
+            modifier = Modifier
+                .clip(RoundedCornerShape(3.dp))
+                .border(1.dp, Oc.border, RoundedCornerShape(3.dp))
+                .clickable { open = true }
+                .padding(horizontal = 8.dp, vertical = 4.dp),
+        )
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            primary.forEach { agent ->
+                DropdownMenuItem(
+                    text = {
+                        Column {
+                            Text(agent.str("name") ?: agent.str("id").orEmpty())
+                            agent.str("description")?.let {
+                                Text(it.take(60), style = MaterialTheme.typography.labelSmall)
+                            }
+                        }
+                    },
+                    onClick = {
+                        open = false
+                        agent.str("id")?.let(onPick)
+                    },
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ModelPicker(
+    current: JsonObject?,
+    models: List<JsonObject>,
+    onPick: (providerID: String, modelID: String, variant: String?) -> Unit,
+) {
+    var open by remember { mutableStateOf(false) }
+    val label = "${current?.str("providerID") ?: "?"}/${current?.str("id") ?: "model"}"
+
+    Box {
+        Text(
+            label,
+            color = Oc.blue,
+            style = MaterialTheme.typography.labelLarge,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier
+                .width(140.dp)
+                .clip(RoundedCornerShape(3.dp))
+                .border(1.dp, Oc.border, RoundedCornerShape(3.dp))
+                .clickable { open = true }
+                .padding(horizontal = 8.dp, vertical = 4.dp),
+        )
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            models.forEach { m ->
+                val providerID = m.str("providerID") ?: return@forEach
+                val modelID = m.str("modelID") ?: m.str("id") ?: return@forEach
+                DropdownMenuItem(
+                    text = {
+                        Column {
+                            Text(m.str("name") ?: modelID)
+                            Text("$providerID / $modelID", style = MaterialTheme.typography.labelSmall)
+                        }
+                    },
+                    onClick = {
+                        open = false
+                        onPick(providerID, modelID, null)
+                    },
+                )
             }
         }
     }
@@ -251,13 +380,10 @@ private fun ReasoningBlock(text: String) {
     }
 }
 
+/** Tool girdi/çıktısını katlanabilir gösterir — hem tamamlanmış hem canlı tool'lar için. */
 @Composable
-private fun ToolBlock(part: JsonObject) {
-    val name = part.str("name") ?: "tool"
-    val state = part.obj("state")
-    val status = state.str("status") ?: "?"
+private fun ToolDetails(input: String, output: String, error: String) {
     var open by remember { mutableStateOf(false) }
-
     Column(Modifier.fillMaxWidth()) {
         Row(
             Modifier
@@ -268,61 +394,254 @@ private fun ToolBlock(part: JsonObject) {
                 .padding(horizontal = 8.dp, vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text(statusIcon(status), style = MaterialTheme.typography.labelLarge)
-            Spacer(Modifier.width(6.dp))
-            Text("tool · $name", color = Oc.blue, style = MaterialTheme.typography.labelLarge)
-            Spacer(Modifier.weight(1f))
-            Icon(
-                if (open) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
-                contentDescription = null,
-                tint = Oc.dim,
-            )
+            Text(if (open) "▾ ayrıntı" else "▸ ayrıntı", color = Oc.dim, style = MaterialTheme.typography.labelSmall)
         }
         if (open) {
-            val input = state.obj("input")
-            Text(
-                input.toString().take(1500),
-                color = Oc.dim,
-                style = MaterialTheme.typography.bodySmall,
-                modifier = Modifier.padding(top = 4.dp),
-            )
-            val content = state.arr("content")
-            if (content.isNotEmpty()) {
-                val out = content.joinToString("\n") { it.obj().str("text").orEmpty() }.trim()
-                if (out.isNotBlank()) {
-                    Text(
-                        out.take(2500),
-                        color = Oc.text,
-                        style = MaterialTheme.typography.bodySmall,
-                        modifier = Modifier
-                            .padding(top = 4.dp)
-                            .fillMaxWidth()
-                            .background(Oc.codeBg)
-                            .padding(6.dp),
-                    )
-                }
+            if (input.isNotBlank()) {
+                Text(
+                    "girdi:",
+                    color = Oc.dim,
+                    style = MaterialTheme.typography.labelSmall,
+                    modifier = Modifier.padding(top = 4.dp),
+                )
+                Text(
+                    input.take(1500),
+                    color = Oc.dim,
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.fillMaxWidth().background(Oc.codeBg).padding(6.dp),
+                )
             }
-            state.obj("error").str("message")?.let {
-                Text("✖ $it", color = Oc.err, style = MaterialTheme.typography.bodySmall)
+            if (output.isNotBlank()) {
+                Text(
+                    "çıktı:",
+                    color = Oc.dim,
+                    style = MaterialTheme.typography.labelSmall,
+                    modifier = Modifier.padding(top = 4.dp),
+                )
+                Text(
+                    output.take(2500),
+                    color = Oc.text,
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.fillMaxWidth().background(Oc.codeBg).padding(6.dp),
+                )
+            }
+            if (error.isNotBlank()) {
+                Text("✖ $error", color = Oc.err, style = MaterialTheme.typography.bodySmall)
             }
         }
     }
 }
 
+private fun toolInputText(state: JsonObject): String {
+    val el = state["input"] ?: return ""
+    return when (el) {
+        is JsonPrimitive -> el.content
+        else -> el.toString()
+    }
+}
+
+@Composable
+private fun ToolBlock(part: JsonObject) {
+    val name = part.str("name") ?: "tool"
+    val state = part.obj("state")
+    val status = state.str("status") ?: "?"
+
+    Column(Modifier.fillMaxWidth()) {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(3.dp))
+                .background(Oc.panelAlt)
+                .padding(horizontal = 8.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(statusIcon(status), style = MaterialTheme.typography.labelLarge)
+            Spacer(Modifier.width(6.dp))
+            Text("tool · $name", color = Oc.blue, style = MaterialTheme.typography.labelLarge)
+            Spacer(Modifier.width(8.dp))
+            Text(status, color = Oc.dim, style = MaterialTheme.typography.labelSmall)
+        }
+        ToolDetails(
+            input = toolInputText(state),
+            output = state.arr("content").joinToString("\n") { it.obj().str("text").orEmpty() },
+            error = state.obj("error").str("message").orEmpty(),
+        )
+    }
+}
+
 @Composable
 private fun LiveToolBlock(tool: ToolRow) {
-    Row(
+    Column(Modifier.fillMaxWidth()) {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(3.dp))
+                .background(Oc.panelAlt)
+                .padding(horizontal = 8.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(statusIcon(tool.status), style = MaterialTheme.typography.labelLarge)
+            Spacer(Modifier.width(6.dp))
+            Text("tool · ${tool.name}", color = Oc.blue, style = MaterialTheme.typography.labelLarge)
+        }
+        ToolDetails(input = tool.input, output = tool.output, error = tool.error)
+    }
+}
+
+// ------------------------------------------------------------------- form
+
+/**
+ * `question` aracıdan gelen etkileşimli form (soru kartı).
+ * Alan türleri: string (seçenekli/seçeneksiz), number, integer, boolean, multiselect.
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun FormCard(
+    form: JsonObject,
+    onReply: (String, JsonObject) -> Unit,
+    onCancel: (String) -> Unit,
+) {
+    val formID = form.str("id").orEmpty()
+    val fields = form.arr("fields").map { it.obj() }.filter { it.str("hidden") != "true" }
+    val answers = remember(formID) { mutableStateMapOf<String, JsonElement>() }
+
+    Column(
         Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(3.dp))
-            .background(Oc.panelAlt)
-            .padding(horizontal = 8.dp, vertical = 4.dp),
-        verticalAlignment = Alignment.CenterVertically,
+            .clip(RoundedCornerShape(4.dp))
+            .background(Oc.panel)
+            .border(1.dp, Oc.purple, RoundedCornerShape(4.dp))
+            .padding(10.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        Text(statusIcon(tool.status), style = MaterialTheme.typography.labelLarge)
-        Spacer(Modifier.width(6.dp))
-        Text("tool · ${tool.name}", color = Oc.blue, style = MaterialTheme.typography.labelLarge)
+        Text("❓ SORU", color = Oc.purple, style = MaterialTheme.typography.labelLarge)
+        Text(form.str("title") ?: "Seçim bekleniyor", style = MaterialTheme.typography.bodyLarge)
+
+        for (field in fields) {
+            val key = field.str("key") ?: continue
+            val title = field.str("title") ?: key
+            val type = field.str("type") ?: "string"
+            val options = field.arr("options").map { it.obj() }
+            val required = field.str("required") == "true"
+            val default = field["default"]?.text()
+
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(
+                    title + if (required) " *" else "",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                field.str("description")?.let {
+                    Text(it, color = Oc.dim, style = MaterialTheme.typography.labelSmall)
+                }
+
+                when {
+                    type == "boolean" -> FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        val selected = answers[key]?.text()
+                        listOf("evet" to "true", "hayır" to "false").forEach { (label, value) ->
+                            ChoiceChip(
+                                label = label,
+                                selected = selected == value,
+                            ) { answers[key] = JsonPrimitive(value == "true") }
+                        }
+                    }
+
+                    options.isNotEmpty() && type != "multiselect" -> {
+                        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            val selected = answers[key]?.text()
+                            options.forEach { opt ->
+                                val value = opt.str("value") ?: return@forEach
+                                ChoiceChip(
+                                    label = opt.str("label") ?: value,
+                                    selected = selected == value,
+                                ) { answers[key] = JsonPrimitive(value) }
+                            }
+                        }
+                        // serbest yanıt her zaman mümkün
+                        var custom by remember(formID, key) { mutableStateOf(default ?: "") }
+                        OutlinedTextField(
+                            value = custom,
+                            onValueChange = {
+                                custom = it
+                                answers[key] = JsonPrimitive(it)
+                            },
+                            singleLine = true,
+                            placeholder = { Text("serbest yanıt…", color = Oc.dim) },
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = ocFieldColors(),
+                        )
+                    }
+
+                    type == "multiselect" -> FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        val selected = answers[key] as? JsonArray
+                        val values = selected?.mapNotNull { it.text() } ?: emptyList()
+                        options.forEach { opt ->
+                            val value = opt.str("value") ?: return@forEach
+                            ChoiceChip(
+                                label = opt.str("label") ?: value,
+                                selected = value in values,
+                            ) {
+                                val next = if (value in values) values - value else values + value
+                                answers[key] = buildJsonArray { next.forEach { add(JsonPrimitive(it)) } }
+                            }
+                        }
+                    }
+
+                    type == "external" -> {
+                        Text(field.str("url") ?: "", color = Oc.blue, style = MaterialTheme.typography.bodySmall)
+                    }
+
+                    else -> {
+                        var text by remember(formID, key) { mutableStateOf(default ?: "") }
+                        OutlinedTextField(
+                            value = text,
+                            onValueChange = {
+                                text = it
+                                answers[key] = JsonPrimitive(it)
+                            },
+                            singleLine = type != "string" || field.str("format") == null,
+                            keyboardOptions = if (type == "number" || type == "integer") {
+                                androidx.compose.foundation.text.KeyboardOptions(keyboardType = KeyboardType.Number)
+                            } else {
+                                androidx.compose.foundation.text.KeyboardOptions.Default
+                            },
+                            placeholder = { Text(field.str("placeholder") ?: "", color = Oc.dim) },
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = ocFieldColors(),
+                        )
+                    }
+                }
+            }
+        }
+
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+            TextButton(onClick = { onCancel(formID) }) { Text("✗ iptal", color = Oc.err) }
+            TextButton(onClick = {
+                val answer = buildJsonObject {
+                    for (f in fields) {
+                        val key = f.str("key") ?: continue
+                        val value = answers[key] ?: continue
+                        put(key, value)
+                    }
+                }
+                onReply(formID, answer)
+            }) { Text("▸ gönder", color = Oc.accent) }
+        }
     }
+}
+
+@Composable
+private fun ChoiceChip(label: String, selected: Boolean, onClick: () -> Unit) {
+    Text(
+        label,
+        color = if (selected) Oc.bg else Oc.text,
+        style = MaterialTheme.typography.labelLarge,
+        modifier = Modifier
+            .clip(RoundedCornerShape(3.dp))
+            .background(if (selected) Oc.accent else Oc.panelAlt)
+            .border(1.dp, if (selected) Oc.accent else Oc.border, RoundedCornerShape(3.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 10.dp, vertical = 4.dp),
+    )
 }
 
 @Composable
@@ -382,6 +701,6 @@ private fun Panel(
 private fun statusIcon(status: String): String = when (status) {
     "completed", "ok" -> "✅"
     "error", "failed" -> "❌"
-    "running" -> "⏳"
+    "running", "streaming" -> "⏳"
     else -> "•"
 }
