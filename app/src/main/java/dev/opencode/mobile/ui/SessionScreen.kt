@@ -153,7 +153,12 @@ fun SessionScreen(
                 onPick = onSwitchModel,
             )
             if (state.busy) {
-                Text("⏳", modifier = Modifier.padding(end = 4.dp))
+                Text(
+                    if (state.childBusy) "⏳ alt ajan" else "⏳",
+                    color = if (state.childBusy) Oc.purple else Oc.text,
+                    style = MaterialTheme.typography.labelSmall,
+                    modifier = Modifier.padding(end = 4.dp),
+                )
                 IconButton(onClick = onInterrupt) {
                     Icon(Icons.Default.Stop, contentDescription = "durdur", tint = Oc.err)
                 }

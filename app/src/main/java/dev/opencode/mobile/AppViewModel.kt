@@ -58,6 +58,8 @@ data class SessionState(
     val messages: List<JsonObject> = emptyList(),
     val live: LiveMessage? = null,
     val busy: Boolean = false,
+    /** Oturumun kendisi değil, alt ajanı çalışıyor. */
+    val childBusy: Boolean = false,
     val permissions: List<JsonObject> = emptyList(),
     val forms: List<JsonObject> = emptyList(),
     val sending: Boolean = false,
@@ -87,6 +89,9 @@ class AppViewModel(
 
     private val _screen = MutableStateFlow<Screen>(Screen.Sessions)
     val screen: StateFlow<Screen> = _screen.asStateFlow()
+
+    /** Kendi yürütmeleri süren oturumlar (UI'da gösterilen set buna üst oturumlar eklenerek hesaplanır). */
+    private var rawActive: Set<String> = emptySet()
 
     private val _connected = MutableStateFlow(false)
     val connected: StateFlow<Boolean> = _connected.asStateFlow()
@@ -204,8 +209,11 @@ class AppViewModel(
 
         when (ev.type) {
             "session.execution.started" -> {
-                if (sid != null) _sessions.update { it.copy(active = it.active + sid) }
-                if (sid == currentSessionId()) _session.update { it.copy(busy = true) }
+                if (sid != null) {
+                    rawActive = rawActive + sid
+                    ensureKnown(sid)   // yeni alt ajan oturumları listeye kat (üst bağ için)
+                    recomputeActive()
+                }
             }
 
             // 2.x'te bitiş olayları: idle / failed (execution.succeeded yok)
@@ -353,16 +361,55 @@ class AppViewModel(
     }
 
     private fun finishSession(sid: String?) {
-        val wasBusy = sid != null && _sessions.value.active.contains(sid)
-        if (sid != null) _sessions.update { it.copy(active = it.active - sid) }
+        val wasBusy = sid != null && rawActive.contains(sid)
+        if (sid != null) rawActive = rawActive - sid
+        recomputeActive()
         if (sid == currentSessionId()) {
-            _session.update { it.copy(busy = false) }
             viewModelScope.launch { refreshMessages() }
         }
         if (wasBusy && !AppVisibility.visible) {
             val title = _sessions.value.sessions.firstOrNull { it.str("id") == sid }?.str("title")
                 ?.ifBlank { null } ?: "oturum"
             notify(sid.hashCode(), "Görev tamamlandı", title)
+        }
+    }
+
+    /**
+     * Aktif oturumlara üst (ana) oturumlarını da ekler: bir alt ajan çalışırken
+     * onu başlatan oturum da "çalışıyor" sayılır.
+     */
+    private fun recomputeActive() {
+        val sessions = _sessions.value.sessions
+        val parents = sessions.associate { it.str("id").orEmpty() to it.str("parentID") }
+        val expanded = rawActive.toMutableSet()
+        for (id in rawActive) {
+            var p = parents[id]
+            val seen = mutableSetOf<String>()
+            while (p != null && p !in expanded && seen.add(p)) {
+                expanded += p
+                p = parents[p]
+            }
+        }
+        _sessions.update { it.copy(active = expanded) }
+        val cur = currentSessionId()
+        if (cur != null) {
+            _session.update {
+                it.copy(busy = cur in expanded, childBusy = cur in expanded && cur !in rawActive)
+            }
+        }
+    }
+
+    /** Yeni açılan (ör. alt ajan) oturumları listeye ekler — üst oturum bağını kurmak için. */
+    private fun ensureKnown(sid: String) {
+        if (_sessions.value.sessions.any { it.str("id") == sid }) return
+        val current = api ?: return
+        viewModelScope.launch {
+            val info = runCatching { current.session(sid) }.getOrNull() ?: return@launch
+            _sessions.update { st ->
+                if (st.sessions.any { it.str("id") == sid }) st
+                else st.copy(sessions = listOf(info) + st.sessions)
+            }
+            recomputeActive()
         }
     }
 
@@ -381,7 +428,9 @@ class AppViewModel(
             try {
                 val list = current.sessions()
                 val active = runCatching { current.active() }.getOrDefault(emptySet())
-                _sessions.update { it.copy(loading = false, sessions = list, active = active) }
+                rawActive = active
+                _sessions.update { it.copy(loading = false, sessions = list) }
+                recomputeActive()
             } catch (e: Exception) {
                 _sessions.update { it.copy(loading = false, error = e.message) }
             }
@@ -418,6 +467,7 @@ class AppViewModel(
                         session = info,
                         messages = msgs,
                         busy = _sessions.value.active.contains(id),
+                        childBusy = _sessions.value.active.contains(id) && !rawActive.contains(id),
                         permissions = perms,
                         forms = forms,
                     )
