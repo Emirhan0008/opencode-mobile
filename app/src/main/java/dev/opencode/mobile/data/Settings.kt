@@ -18,6 +18,10 @@ class Settings(private val context: Context) {
     private val keyUrl = stringPreferencesKey("base_url")
     private val keyToken = stringPreferencesKey("token")
     private val keyDarkTheme = booleanPreferencesKey("dark_theme")
+    private val keyShutdownPlan = stringPreferencesKey("shutdown_plan")
+
+    /** Planlanmış kapatma: "soft" | "force" | null (kurulu değil). */
+    val shutdownPlan: Flow<String?> = context.dataStore.data.map { prefs -> prefs[keyShutdownPlan] }
 
     val connection: Flow<Connection?> = context.dataStore.data.map { prefs ->
         val url = prefs[keyUrl]
@@ -37,6 +41,12 @@ class Settings(private val context: Context) {
 
     suspend fun setDarkTheme(dark: Boolean) {
         context.dataStore.edit { prefs -> prefs[keyDarkTheme] = dark }
+    }
+
+    suspend fun setShutdownPlan(plan: String?) {
+        context.dataStore.edit { prefs ->
+            if (plan == null) prefs.remove(keyShutdownPlan) else prefs[keyShutdownPlan] = plan
+        }
     }
 
     suspend fun clear() {

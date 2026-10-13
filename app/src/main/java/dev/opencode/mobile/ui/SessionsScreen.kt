@@ -27,6 +27,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -81,8 +82,12 @@ fun SessionsScreen(
     onDelete: (String) -> Unit,
     onRename: (id: String, title: String) -> Unit,
     onFork: (String) -> Unit,
+    shutdownArmed: Boolean,
+    onArmShutdown: (force: Boolean) -> Unit,
+    onCancelShutdown: () -> Unit,
 ) {
     var showNew by remember { mutableStateOf(false) }
+    var showShutdown by remember { mutableStateOf(false) }
     var query by remember { mutableStateOf("") }
     // Alt ajan (subagent) oturumları varsayılan olarak gizli — "tümü" ile açılır.
     var filter by remember { mutableStateOf(SessionFilter.TOP) }
@@ -117,10 +122,36 @@ fun SessionsScreen(
                     IconButton(onClick = onToggleTheme) {
                         Text(if (darkTheme) "☀" else "☾", style = MaterialTheme.typography.labelLarge)
                     }
+                    IconButton(onClick = { showShutdown = true }) {
+                        Icon(
+                            painterResource(R.drawable.ic_power),
+                            contentDescription = "kapatma planı",
+                            tint = if (shutdownArmed) Oc.warn else Oc.dim,
+                        )
+                    }
                     IconButton(onClick = onRefresh) {
                         Icon(Icons.Default.Refresh, contentDescription = "yenile", tint = Oc.accent)
                     }
                     TextButton(onClick = onDisconnect) { Text("çıkış", color = Oc.dim) }
+                }
+
+                // kapatma planı bandı
+                if (shutdownArmed) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(Oc.warn.copy(alpha = 0.12f))
+                            .padding(horizontal = 12.dp, vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            "⏱ kapanış planlandı — tüm oturumlar (alt ajanlar dahil) bitince bilgisayar kapatılacak",
+                            color = Oc.warn,
+                            style = MaterialTheme.typography.labelSmall,
+                            modifier = Modifier.weight(1f),
+                        )
+                        TextButton(onClick = onCancelShutdown) { Text("iptal", color = Oc.err) }
+                    }
                 }
 
                 // ------------------------------------------------------- arama
@@ -238,6 +269,21 @@ fun SessionsScreen(
                         onNew(title, dir)
                     },
                     onDismiss = { showNew = false },
+                )
+            }
+
+            if (showShutdown) {
+                ShutdownDialog(
+                    armed = shutdownArmed,
+                    onArm = { force ->
+                        showShutdown = false
+                        onArmShutdown(force)
+                    },
+                    onCancel = {
+                        showShutdown = false
+                        onCancelShutdown()
+                    },
+                    onDismiss = { showShutdown = false },
                 )
             }
 
@@ -418,6 +464,60 @@ private fun SessionRow(
             },
             dismissButton = {
                 TextButton(onClick = { showDelete = false }) { Text("Vazgeç", color = Oc.dim) }
+            },
+        )
+    }
+}
+
+/** Kapatma planı diyaloğu: kur / iptal et. */
+@Composable
+private fun ShutdownDialog(
+    armed: Boolean,
+    onArm: (Boolean) -> Unit,
+    onCancel: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    if (armed) {
+        AlertDialog(
+            onDismissRequest = onDismiss,
+            title = { Text("Kapatma planlandı") },
+            text = {
+                Text(
+                    "Tüm oturumlar (alt ajanlar dahil) bittiğinde bilgisayar kapatılacak. " +
+                        "Kapatma komutu “opencode-mobile” oturumu varsa ona, yoksa en son aktif oturuma gönderilir.",
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = onCancel) { Text("İptal et", color = Oc.err) }
+            },
+            dismissButton = {
+                TextButton(onClick = onDismiss) { Text("Kapat", color = Oc.dim) }
+            },
+        )
+    } else {
+        var force by remember { mutableStateOf(false) }
+        AlertDialog(
+            onDismissRequest = onDismiss,
+            title = { Text("Bilgisayarı kapat") },
+            text = {
+                Column {
+                    Text(
+                        "Tüm oturumlar (alt ajanlar dahil) bittiğinde bilgisayar kapatılsın. " +
+                            "Komut “opencode-mobile” oturumu varsa ona, yoksa en son aktif oturuma " +
+                            "bir kez gönderilir: shutdown.exe /s /t 120",
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(checked = force, onCheckedChange = { force = it })
+                        Text("Açık programları zorla kapat (/f)")
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { onArm(force) }) { Text("Kapatmayı kur", color = Oc.warn) }
+            },
+            dismissButton = {
+                TextButton(onClick = onDismiss) { Text("Vazgeç", color = Oc.dim) }
             },
         )
     }

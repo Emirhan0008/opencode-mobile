@@ -9,6 +9,7 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import dev.opencode.mobile.data.Settings
 import dev.opencode.mobile.net.Api
+import dev.opencode.mobile.net.ShutdownWatcherService
 import dev.opencode.mobile.net.OcEvent
 import dev.opencode.mobile.net.arr
 import dev.opencode.mobile.net.num
@@ -114,6 +115,10 @@ class AppViewModel(
     private val _darkTheme = MutableStateFlow(true)
     val darkTheme: StateFlow<Boolean> = _darkTheme.asStateFlow()
 
+    /** Planlanmış kapatma: "soft" | "force" | null. */
+    private val _shutdownPlan = MutableStateFlow<String?>(null)
+    val shutdownPlan: StateFlow<String?> = _shutdownPlan.asStateFlow()
+
     init {
         viewModelScope.launch {
             settings.connection.collect { conn ->
@@ -129,6 +134,9 @@ class AppViewModel(
         }
         viewModelScope.launch {
             settings.darkTheme.collect { _darkTheme.value = it }
+        }
+        viewModelScope.launch {
+            settings.shutdownPlan.collect { _shutdownPlan.value = it }
         }
     }
 
@@ -177,6 +185,7 @@ class AppViewModel(
             sseCall = null
             api = null
             _connected.value = false
+            cancelShutdown()
             settings.clear()
         }
     }
@@ -586,6 +595,37 @@ class AppViewModel(
                     _session.update { it.copy(busy = false, error = "Geri alma başarısız: ${e.message}") }
                 }
         }
+    }
+
+    /** Liste sırasına göre önceki (-1) / sonraki (+1) oturuma geçiş — kaydırma hareketi. */
+    fun switchRelative(offset: Int) {
+        val list = _sessions.value.sessions
+        val cur = currentSessionId() ?: return
+        val idx = list.indexOfFirst { it.str("id") == cur }
+        if (idx < 0) return
+        val target = list.getOrNull(idx + offset) ?: return
+        target.str("id")?.let { openSession(it) }
+    }
+
+    // --------------------------------------------- kapatma planı (bekçi servis)
+
+    /**
+     * "Tüm oturumlar bitince bilgisayarı kapat" planını kurar.
+     * İzleme [ShutdownWatcherService] tarafından yapılır; [force] true ise
+     * kapatma komutu çalışan programları zorla kapatır (`shutdown /f`).
+     */
+    fun armShutdown(force: Boolean) {
+        val plan = if (force) "force" else "soft"
+        _shutdownPlan.value = plan
+        viewModelScope.launch { settings.setShutdownPlan(plan) }
+        ShutdownWatcherService.start(appContext, force)
+    }
+
+    /** Planlanmış kapatmayı iptal eder. */
+    fun cancelShutdown() {
+        ShutdownWatcherService.cancel(appContext)
+        _shutdownPlan.value = null
+        viewModelScope.launch { settings.setShutdownPlan(null) }
     }
 
     // ----------------------------------------------------- agent / model / form

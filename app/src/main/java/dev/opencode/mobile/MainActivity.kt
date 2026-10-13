@@ -67,6 +67,7 @@ private fun Root(vm: AppViewModel, dark: Boolean) {
     val agents by vm.agents.collectAsState()
     val models by vm.models.collectAsState()
     val globalPermissions by vm.globalPermissions.collectAsState()
+    val shutdownPlan by vm.shutdownPlan.collectAsState()
     var connectError by remember { mutableStateOf<String?>(null) }
     var connecting by remember { mutableStateOf(false) }
 
@@ -106,6 +107,9 @@ private fun Root(vm: AppViewModel, dark: Boolean) {
             onDelete = vm::deleteSession,
             onRename = vm::renameSession,
             onFork = vm::forkSession,
+            shutdownArmed = shutdownPlan != null,
+            onArmShutdown = vm::armShutdown,
+            onCancelShutdown = vm::cancelShutdown,
         )
 
         is Screen.Session -> SessionScreen(
@@ -123,6 +127,7 @@ private fun Root(vm: AppViewModel, dark: Boolean) {
             onReplyForm = vm::replyForm,
             onCancelForm = vm::cancelForm,
             onRevert = vm::revertToMessage,
+            onSwipe = vm::switchRelative,
         )
     }
 }

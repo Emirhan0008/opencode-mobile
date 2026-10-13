@@ -115,6 +115,10 @@ class Api(baseUrl: String, private val token: String) {
         post("/api/session/$id/revert/commit")
     }
 
+    /** Oturumun kabuğunda komut çalıştırır (OpenCode sunucusunun çalıştığı makinede). */
+    suspend fun shell(id: String, command: String): JsonElement =
+        post("/api/session/$id/shell", buildJsonObject { put("command", command) })
+
     suspend fun active(): Set<String> =
         get("/api/session/active").obj().obj("data").keys
 

@@ -6,6 +6,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -48,7 +49,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.input.KeyboardType
@@ -85,9 +88,13 @@ fun SessionScreen(
     onReplyForm: (formID: String, answer: JsonObject) -> Unit,
     onCancelForm: (formID: String) -> Unit,
     onRevert: (messageID: String) -> Unit,
+    onSwipe: (offset: Int) -> Unit,
 ) {
     var input by remember { mutableStateOf("") }
     val listState = rememberLazyListState()
+    // sağa/sola kaydırma ile oturumlar arası geçiş
+    var dragX by remember { mutableStateOf(0f) }
+    val swipeThreshold = with(LocalDensity.current) { 120.dp.toPx() }
 
     LaunchedEffect(state.messages.size, state.live?.text?.length, state.forms.size) {
         val count = state.forms.size + state.messages.size + (if (state.live != null) 1 else 0)
@@ -168,7 +175,23 @@ fun SessionScreen(
         // -------------------------------------------------------------- akış
         LazyColumn(
             state = listState,
-            modifier = Modifier.weight(1f).fillMaxWidth(),
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth()
+                .pointerInput(Unit) {
+                    detectHorizontalDragGestures(
+                        onDragStart = { dragX = 0f },
+                        onDragCancel = { dragX = 0f },
+                        onDragEnd = {
+                            when {
+                                dragX < -swipeThreshold -> onSwipe(1)  // sola: sonraki
+                                dragX > swipeThreshold -> onSwipe(-1)  // sağa: önceki
+                            }
+                            dragX = 0f
+                        },
+                        onHorizontalDrag = { _, amount -> dragX += amount },
+                    )
+                },
             contentPadding = PaddingValues(10.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
