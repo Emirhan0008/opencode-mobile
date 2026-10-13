@@ -1,9 +1,11 @@
 package dev.opencode.mobile.ui
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -46,7 +48,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -80,6 +84,7 @@ fun SessionScreen(
     onSwitchModel: (providerID: String, modelID: String, variant: String?) -> Unit,
     onReplyForm: (formID: String, answer: JsonObject) -> Unit,
     onCancelForm: (formID: String) -> Unit,
+    onRevert: (messageID: String) -> Unit,
 ) {
     var input by remember { mutableStateOf("") }
     val listState = rememberLazyListState()
@@ -178,7 +183,13 @@ fun SessionScreen(
             }
 
             items(state.messages, key = { it.str("id").orEmpty() }) { msg ->
-                MessageCard(msg, liveID = state.live?.id)
+                MessageCard(
+                    msg = msg,
+                    liveID = state.live?.id,
+                    busy = state.busy,
+                    onRevert = onRevert,
+                    onQuote = { quote -> input = (input.trimEnd() + "\n\n" + quote).trimStart('\n') },
+                )
             }
 
             state.live?.let { live ->
@@ -308,47 +319,104 @@ private fun ModelPicker(
 
 // ------------------------------------------------------------------ cards
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun MessageCard(msg: JsonObject, liveID: String?) {
+private fun MessageCard(
+    msg: JsonObject,
+    liveID: String?,
+    busy: Boolean,
+    onQuote: (String) -> Unit,
+    onRevert: (String) -> Unit,
+) {
     val id = msg.str("id")
     if (id != null && id == liveID) return // canlı kart bunun yerine gösteriliyor
+    val type = msg.str("type")
+    if (type != "user" && type != "assistant") return
 
-    when (msg.str("type")) {
-        "user" -> Panel(border = Oc.blue, header = "» sen") {
-            Text(msg.str("text").orEmpty(), style = MaterialTheme.typography.bodyLarge)
-        }
+    var menu by remember { mutableStateOf(false) }
+    val clipboard = LocalClipboardManager.current
+    val plain = messageText(msg)
 
-        "assistant" -> {
-            val model = msg.obj("model")
-            Panel(
-                border = Oc.border,
-                header = "▸ ${msg.str("agent") ?: "agent"}  ·  ${model.str("providerID")}/${model.str("id")}",
-            ) {
-                for (raw in msg.arr("content")) {
-                    val part = raw.obj()
-                    when (part.str("type")) {
-                        "text" -> Text(part.str("text").orEmpty(), style = MaterialTheme.typography.bodyLarge)
-                        "reasoning" -> ReasoningBlock(part.str("text").orEmpty())
-                        "tool" -> ToolBlock(part)
+    Box(
+        Modifier
+            .fillMaxWidth()
+            .combinedClickable(onClick = {}, onLongClick = { menu = true }),
+    ) {
+        when (type) {
+            "user" -> Panel(border = Oc.blue, header = "» sen") {
+                Text(msg.str("text").orEmpty(), style = MaterialTheme.typography.bodyLarge)
+            }
+
+            "assistant" -> {
+                val model = msg.obj("model")
+                Panel(
+                    border = Oc.border,
+                    header = "▸ ${msg.str("agent") ?: "agent"}  ·  ${model.str("providerID")}/${model.str("id")}",
+                ) {
+                    for (raw in msg.arr("content")) {
+                        val part = raw.obj()
+                        when (part.str("type")) {
+                            "text" -> Text(part.str("text").orEmpty(), style = MaterialTheme.typography.bodyLarge)
+                            "reasoning" -> ReasoningBlock(part.str("text").orEmpty())
+                            "tool" -> ToolBlock(part)
+                        }
                     }
-                }
-                // model/sağlayıcı hatası: içerik boş kalmışsa da hata görünür olsun
-                val err = msg.obj("error").str("message")
-                if (err != null || msg.str("finish") == "error") {
-                    Text(
-                        "✖ " + (err ?: "yanıt üretilemedi"),
-                        color = Oc.err,
-                        style = MaterialTheme.typography.bodySmall,
-                        modifier = Modifier.padding(top = 4.dp),
-                    )
+                    // model/sağlayıcı hatası: içerik boş kalmışsa da hata görünür olsun
+                    val err = msg.obj("error").str("message")
+                    if (err != null || msg.str("finish") == "error") {
+                        Text(
+                            "✖ " + (err ?: "yanıt üretilemedi"),
+                            color = Oc.err,
+                            style = MaterialTheme.typography.bodySmall,
+                            modifier = Modifier.padding(top = 4.dp),
+                        )
+                    }
                 }
             }
         }
 
-        "system", "compaction", "synthetic", "skill" -> Unit
-
-        else -> Unit
+        // uzun basma menüsü: kopyala / alıntıla / geri al
+        DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+            DropdownMenuItem(
+                text = { Text("Metni kopyala") },
+                enabled = plain.isNotBlank(),
+                onClick = {
+                    clipboard.setText(AnnotatedString(plain))
+                    menu = false
+                },
+            )
+            DropdownMenuItem(
+                text = { Text("Yanıta alıntıla") },
+                enabled = plain.isNotBlank(),
+                onClick = {
+                    onQuote(plain.lineSequence().joinToString("\n") { "> $it" })
+                    menu = false
+                },
+            )
+            DropdownMenuItem(
+                text = { Text("Bu noktaya geri al (revert)") },
+                enabled = id != null && !busy,
+                onClick = {
+                    menu = false
+                    if (id != null) onRevert(id)
+                },
+            )
+        }
     }
+}
+
+/** Kopyalama/alıntılama için mesajın düz metni. */
+private fun messageText(msg: JsonObject): String = when (msg.str("type")) {
+    "user" -> msg.str("text").orEmpty().trim()
+    "assistant" -> msg.arr("content").mapNotNull { raw ->
+        val part = raw.obj()
+        when (part.str("type")) {
+            "text" -> part.str("text")?.trim()
+            "reasoning" -> part.str("text")?.trim()?.let { "[düşünme]\n$it" }
+            else -> null
+        }
+    }.filter { it.isNotBlank() }.joinToString("\n\n")
+    else -> ""
 }
 
 @Composable

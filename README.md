@@ -19,6 +19,10 @@ TUI estetiğinde: koyu zemin, monospace yazılar, kutulu paneller.
   model/sağlayıcı hataları mesaj içinde görünür.
 - **Prompt girişi**: mesaj yazın, yanıt canlı aksın; çalışan görevi durdurma düğmesi.
 - **Ajan & model seçimi**: oturum için ajan (build/…) ve model değiştirme.
+- **Uzun basma menüleri**:
+  - Oturum satırı: başlık/ID kopyalama, yeniden adlandırma, çoğaltma (fork), silme (onaylı).
+  - Mesaj kartı: metni kopyalama, yanıta alıntı olarak ekleme, o noktaya kadar geri alma
+    (`revert/stage` + `revert/commit`).
 - **Soru kartları**: `question` aracıdan gelen etkileşimli formlar (seçenekli/serbest yanıt)
   doğrudan telefondan yanıtlanabilir.
 - **İzin onayları**: "İzin isteği" kartında *bir kez / her zaman / reddet* düğmeleri.

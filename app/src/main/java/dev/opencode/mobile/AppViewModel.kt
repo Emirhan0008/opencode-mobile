@@ -466,6 +466,78 @@ class AppViewModel(
         }
     }
 
+    // ------------------------------------------------- session yönetimi (uzun bas)
+
+    fun deleteSession(id: String) {
+        val current = api ?: return
+        viewModelScope.launch {
+            runCatching { current.deleteSession(id) }
+                .onSuccess {
+                    if (currentSessionId() == id) goBack()
+                    refreshSessions()
+                }
+                .onFailure { e ->
+                    _sessions.update { it.copy(error = "Silinemedi: ${e.message}") }
+                }
+        }
+    }
+
+    fun renameSession(id: String, title: String) {
+        val current = api ?: return
+        viewModelScope.launch {
+            runCatching { current.renameSession(id, title) }
+                .onSuccess {
+                    _sessions.update { st ->
+                        st.copy(sessions = st.sessions.map { s ->
+                            if (s.str("id") == id) JsonObject(s + ("title" to JsonPrimitive(title))) else s
+                        })
+                    }
+                    _session.update { st ->
+                        val cur = st.session
+                        if (cur != null && cur.str("id") == id)
+                            st.copy(session = JsonObject(cur + ("title" to JsonPrimitive(title))))
+                        else st
+                    }
+                }
+                .onFailure { e ->
+                    _sessions.update { it.copy(error = "Yeniden adlandırılamadı: ${e.message}") }
+                }
+        }
+    }
+
+    /** Oturumu çoğaltır ve kopyasını açar. */
+    fun forkSession(id: String) {
+        val current = api ?: return
+        viewModelScope.launch {
+            runCatching { current.forkSession(id) }
+                .onSuccess { newId ->
+                    refreshSessions()
+                    openSession(newId)
+                }
+                .onFailure { e ->
+                    _sessions.update { it.copy(error = "Çoğaltılamadı: ${e.message}") }
+                }
+        }
+    }
+
+    /** Mesajın bulunduğu noktaya kadar oturumu geri alır. */
+    fun revertToMessage(messageID: String) {
+        val current = api ?: return
+        val id = currentSessionId() ?: return
+        viewModelScope.launch {
+            _session.update { it.copy(busy = true) }
+            runCatching { current.revertTo(id, messageID) }
+                .onSuccess {
+                    _session.update { it.copy(busy = false, live = null) }
+                    refreshMessages()
+                    refreshSessions()
+                }
+                .onFailure { e ->
+                    _session.update { it.copy(busy = false, error = "Geri alma başarısız: ${e.message}") }
+                }
+        }
+    }
+
     // ----------------------------------------------------- agent / model / form
 
     private fun refreshAgents() {

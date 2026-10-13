@@ -103,6 +103,9 @@ private fun Root(vm: AppViewModel, dark: Boolean) {
                 vm.newSession(title, dir) { id -> if (id != null) vm.openSession(id) }
             },
             onDisconnect = vm::disconnect,
+            onDelete = vm::deleteSession,
+            onRename = vm::renameSession,
+            onFork = vm::forkSession,
         )
 
         is Screen.Session -> SessionScreen(
@@ -119,6 +122,7 @@ private fun Root(vm: AppViewModel, dark: Boolean) {
             },
             onReplyForm = vm::replyForm,
             onCancelForm = vm::cancelForm,
+            onRevert = vm::revertToMessage,
         )
     }
 }

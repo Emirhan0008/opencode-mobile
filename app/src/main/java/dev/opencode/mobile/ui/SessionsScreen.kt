@@ -1,9 +1,11 @@
 package dev.opencode.mobile.ui
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -24,7 +26,10 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -41,7 +46,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import dev.opencode.mobile.R
@@ -71,6 +78,9 @@ fun SessionsScreen(
     onOpen: (String) -> Unit,
     onNew: (title: String, directory: String) -> Unit,
     onDisconnect: () -> Unit,
+    onDelete: (String) -> Unit,
+    onRename: (id: String, title: String) -> Unit,
+    onFork: (String) -> Unit,
 ) {
     var showNew by remember { mutableStateOf(false) }
     var query by remember { mutableStateOf("") }
@@ -204,6 +214,7 @@ fun SessionsScreen(
                 ) {
                     items(visible, key = { it.str("id").orEmpty() }) { s ->
                         SessionRow(
+                            id = s.str("id").orEmpty(),
                             title = s.str("title")?.ifBlank { null } ?: "(başlıksız)",
                             directory = s.obj("location").str("directory") ?: "?",
                             updatedAt = s.obj("time").num("updated") ?: s.obj("time").num("created") ?: 0.0,
@@ -212,6 +223,9 @@ fun SessionsScreen(
                             failed = s.str("outcome") == "failed",
                             child = s.str("parentID") != null,
                             onClick = { s.str("id")?.let(onOpen) },
+                            onDelete = onDelete,
+                            onRename = onRename,
+                            onFork = onFork,
                         )
                     }
                 }
@@ -249,8 +263,10 @@ private fun FilterChipRow(filter: SessionFilter, selected: Boolean, onClick: () 
     )
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun SessionRow(
+    id: String,
     title: String,
     directory: String,
     updatedAt: Double,
@@ -259,59 +275,150 @@ private fun SessionRow(
     failed: Boolean,
     child: Boolean,
     onClick: () -> Unit,
+    onDelete: (String) -> Unit,
+    onRename: (String, String) -> Unit,
+    onFork: (String) -> Unit,
 ) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(4.dp))
-            .background(Oc.panel)
-            .border(1.dp, when {
-                busy -> Oc.accent
-                failed -> Oc.err
-                else -> Oc.border
-            }, RoundedCornerShape(4.dp))
-            .clickable(onClick = onClick)
-            .padding(10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Box(
-            Modifier
-                .size(8.dp)
-                .clip(CircleShape)
-                .background(when {
+    var menu by remember { mutableStateOf(false) }
+    var showRename by remember { mutableStateOf(false) }
+    var showDelete by remember { mutableStateOf(false) }
+    val clipboard = LocalClipboardManager.current
+
+    Box(Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(4.dp))
+                .background(Oc.panel)
+                .border(1.dp, when {
                     busy -> Oc.accent
                     failed -> Oc.err
-                    else -> Oc.dim
-                }),
-        )
-        Spacer(Modifier.width(10.dp))
-        Column(Modifier.weight(1f)) {
-            Text(
-                (if (child) "↳ " else "") + title,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                style = MaterialTheme.typography.bodyLarge,
+                    else -> Oc.border
+                }, RoundedCornerShape(4.dp))
+                .combinedClickable(onClick = onClick, onLongClick = { menu = true })
+                .padding(10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(
+                Modifier
+                    .size(8.dp)
+                    .clip(CircleShape)
+                    .background(when {
+                        busy -> Oc.accent
+                        failed -> Oc.err
+                        else -> Oc.dim
+                    }),
             )
+            Spacer(Modifier.width(10.dp))
+            Column(Modifier.weight(1f)) {
+                Text(
+                    (if (child) "↳ " else "") + title,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    style = MaterialTheme.typography.bodyLarge,
+                )
+                Text(
+                    "$directory  ·  ${formatTime(updatedAt)}  ·  $${"%.3f".format(cost)}",
+                    style = MaterialTheme.typography.bodySmall,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
             Text(
-                "$directory  ·  ${formatTime(updatedAt)}  ·  $${"%.3f".format(cost)}",
-                style = MaterialTheme.typography.bodySmall,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
+                when {
+                    busy -> "çalışıyor"
+                    failed -> "başarısız"
+                    child -> "alt ajan"
+                    else -> ""
+                },
+                color = when {
+                    busy -> Oc.accent
+                    failed -> Oc.err
+                    else -> Oc.purple
+                },
+                style = MaterialTheme.typography.labelSmall,
             )
         }
-        Text(
-            when {
-                busy -> "çalışıyor"
-                failed -> "başarısız"
-                child -> "alt ajan"
-                else -> ""
+
+        // uzun basma menüsü
+        DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+            DropdownMenuItem(
+                text = { Text("Başlığı kopyala") },
+                onClick = {
+                    clipboard.setText(AnnotatedString(title))
+                    menu = false
+                },
+            )
+            DropdownMenuItem(
+                text = { Text("ID'yi kopyala") },
+                onClick = {
+                    clipboard.setText(AnnotatedString(id))
+                    menu = false
+                },
+            )
+            DropdownMenuItem(
+                text = { Text("Yeniden adlandır") },
+                onClick = {
+                    menu = false
+                    showRename = true
+                },
+            )
+            DropdownMenuItem(
+                text = { Text("Çoğalt (fork)") },
+                onClick = {
+                    menu = false
+                    onFork(id)
+                },
+            )
+            DropdownMenuItem(
+                text = { Text("Sil", color = Oc.err) },
+                onClick = {
+                    menu = false
+                    showDelete = true
+                },
+            )
+        }
+    }
+
+    if (showRename) {
+        var name by remember { mutableStateOf(title) }
+        AlertDialog(
+            onDismissRequest = { showRename = false },
+            title = { Text("Yeniden adlandır") },
+            text = {
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
             },
-            color = when {
-                busy -> Oc.accent
-                failed -> Oc.err
-                else -> Oc.purple
+            confirmButton = {
+                TextButton(onClick = {
+                    showRename = false
+                    if (name.isNotBlank() && name != title) onRename(id, name.trim())
+                }) { Text("Kaydet", color = Oc.accent) }
             },
-            style = MaterialTheme.typography.labelSmall,
+            dismissButton = {
+                TextButton(onClick = { showRename = false }) { Text("Vazgeç", color = Oc.dim) }
+            },
+        )
+    }
+
+    if (showDelete) {
+        AlertDialog(
+            onDismissRequest = { showDelete = false },
+            title = { Text("Oturumu sil?") },
+            text = { Text("“$title” kalıcı olarak silinecek. Bu işlem geri alınamaz.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    showDelete = false
+                    onDelete(id)
+                }) { Text("Sil", color = Oc.err) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDelete = false }) { Text("Vazgeç", color = Oc.dim) }
+            },
         )
     }
 }

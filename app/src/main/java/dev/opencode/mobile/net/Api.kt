@@ -61,6 +61,11 @@ class Api(baseUrl: String, private val token: String) {
         execute(builder(path).delete().build())
     }
 
+    suspend fun patch(path: String, body: JsonElement? = null): JsonElement = withContext(Dispatchers.IO) {
+        val payload = (body?.toString() ?: "{}").toRequestBody("application/json".toMediaType())
+        execute(builder(path).patch(payload).build())
+    }
+
     private fun execute(request: Request): JsonElement {
         client.newCall(request).execute().use { res ->
             val text = res.body?.string().orEmpty()
@@ -91,6 +96,24 @@ class Api(baseUrl: String, private val token: String) {
         post("/api/session/$id/prompt", buildJsonObject { put("text", text) })
 
     suspend fun interrupt(id: String): JsonElement = post("/api/session/$id/interrupt")
+
+    suspend fun deleteSession(id: String): JsonElement = delete("/api/session/$id")
+
+    suspend fun renameSession(id: String, title: String): JsonElement =
+        patch("/api/session/$id", buildJsonObject { put("title", title) })
+
+    /** Oturumu çoğaltır; yeni oturumun kimliğini döndürür. */
+    suspend fun forkSession(id: String): String {
+        val r = post("/api/session/$id/fork").obj()
+        val data = if (r.containsKey("data")) r.obj("data") else r
+        return data.str("id") ?: throw ApiException(500, "fork yanıtında oturum kimliği yok")
+    }
+
+    /** Belirtilen mesaja kadar tüm değişiklikleri geri alır (stage + commit). */
+    suspend fun revertTo(id: String, messageID: String) {
+        post("/api/session/$id/revert/stage", buildJsonObject { put("messageID", messageID) })
+        post("/api/session/$id/revert/commit")
+    }
 
     suspend fun active(): Set<String> =
         get("/api/session/active").obj().obj("data").keys
