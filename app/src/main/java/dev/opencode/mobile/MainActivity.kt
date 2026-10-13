@@ -69,6 +69,7 @@ private fun Root(vm: AppViewModel, dark: Boolean) {
     val commands by vm.commands.collectAsState()
     val globalPermissions by vm.globalPermissions.collectAsState()
     val shutdownPlan by vm.shutdownPlan.collectAsState()
+    val watchStatus by vm.watchStatus.collectAsState()
     var connectError by remember { mutableStateOf<String?>(null) }
     var connecting by remember { mutableStateOf(false) }
 
@@ -111,6 +112,9 @@ private fun Root(vm: AppViewModel, dark: Boolean) {
             shutdownArmed = shutdownPlan != null,
             onArmShutdown = vm::armShutdown,
             onCancelShutdown = vm::cancelShutdown,
+            shutdownAt = shutdownPlan?.split('|')?.getOrNull(2)?.takeIf { it != "-" },
+            watchStatus = watchStatus,
+            onRefreshWatch = vm::refreshShutdownStatus,
         )
 
         is Screen.Session -> SessionScreen(

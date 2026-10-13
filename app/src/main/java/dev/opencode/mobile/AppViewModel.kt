@@ -66,6 +66,18 @@ data class SessionState(
     val error: String? = null,
 )
 
+/** Bilgisayardaki kapatma gözcüsünün canlılık raporu (shutdown-watch.ps1 -Status). */
+data class WatchStatus(
+    val live: Boolean,
+    val pid: Int?,
+    val uptimeMinutes: Int?,
+    val lastSayim: String?,
+    val lastSayimAt: String?,
+    val lastLogLine: String?,
+    val lastLogAt: String?,
+    val shutdownSent: Boolean,
+)
+
 sealed interface Screen {
     data object Connect : Screen
     data object Sessions : Screen
@@ -117,9 +129,17 @@ class AppViewModel(
     private val _darkTheme = MutableStateFlow(true)
     val darkTheme: StateFlow<Boolean> = _darkTheme.asStateFlow()
 
-    /** Gönderilmiş kapatma görevi: "soft|<oturumID>" | "force|<oturumID>" | null. */
+    /**
+     * Gönderilmiş kapatma görevi:
+     * yeni biçim `"<force|soft>|<oturumID>|<HH:MM veya ->|<armedAtEpochMs>"`,
+     * eski biçim `"force|<oturumID>"` / `"soft|<oturumID>"` (at=null, armedAt=0).
+     */
     private val _shutdownPlan = MutableStateFlow<String?>(null)
     val shutdownPlan: StateFlow<String?> = _shutdownPlan.asStateFlow()
+
+    /** Gözcünün en son okunan canlılık durumu (bilinmiyorsa null). */
+    private val _watchStatus = MutableStateFlow<WatchStatus?>(null)
+    val watchStatus: StateFlow<WatchStatus?> = _watchStatus.asStateFlow()
 
     init {
         viewModelScope.launch {
@@ -138,7 +158,12 @@ class AppViewModel(
             settings.darkTheme.collect { _darkTheme.value = it }
         }
         viewModelScope.launch {
-            settings.shutdownPlan.collect { _shutdownPlan.value = it }
+            settings.shutdownPlan.collect { plan ->
+                _shutdownPlan.value = plan
+                // Depodan gelen plan (uygulama açılışı) için gözcü canlılığını sorgula —
+                // bayat banner temizliği. Bağlantı sonra kurulursa attach() tetikler.
+                if (plan != null && api != null) refreshShutdownStatus()
+            }
         }
     }
 
@@ -153,6 +178,8 @@ class AppViewModel(
         refreshModels()
         refreshCommands()
         refreshSessions()
+        // Plan varsa gözcü canlılığını başlangıçta bir kez sorgula (bayat banner temizliği için).
+        if (_shutdownPlan.value != null) refreshShutdownStatus()
     }
 
     /** Pairing kodu / URL'i ile bağlanır. */
@@ -620,12 +647,13 @@ class AppViewModel(
      * Hedef: [targetId] verilmişse o oturum; yoksa başlığında "opencode-mobile"
      * geçen oturum, o da yoksa en son güncellenen oturum.
      * [force] true ise kapatma komutu çalışan programları zorla kapatır (`shutdown /f`).
+     * [at] "HH:MM" ise gözcü o saate kadar hiç tetiklenmez; null ise "işler bitince".
      *
      * Görev TEK SEFERLİKTİR: prompt bunu açıkça söyler — oturum kapatma komutunu en
      * fazla bir kez çalıştırır, döngüye girmez. (Geçmişte bir oturum bunu sürekli
      * tekrarlayan bir döngüye sokmuştu; prompt'taki kurallar bunu engeller.)
      */
-    fun armShutdown(force: Boolean, targetId: String? = null) {
+    fun armShutdown(force: Boolean, targetId: String? = null, at: String? = null) {
         val current = api ?: return
         viewModelScope.launch {
             val id = if (!targetId.isNullOrBlank()) {
@@ -641,15 +669,20 @@ class AppViewModel(
                 notify(41, "Kapatma görevi kurulamadı", "Hedef oturum bulunamadı.")
                 return@launch
             }
-            runCatching { current.prompt(id, shutdownTask(id, force)) }
+            runCatching { current.prompt(id, shutdownTask(id, force, at)) }
                 .onSuccess {
-                    val plan = (if (force) "force" else "soft") + "|" + id
+                    val plan = (if (force) "force" else "soft") + "|" + id + "|" +
+                        (at ?: "-") + "|" + System.currentTimeMillis()
                     _shutdownPlan.value = plan
                     viewModelScope.launch { settings.setShutdownPlan(plan) }
                     notify(
                         41,
                         "Kapatma görevi gönderildi",
-                        "Tüm işler bitince bilgisayar kapatılacak (telefon kapalı olsa da sürer).",
+                        if (at != null) {
+                            "En erken $at — oturumlar boşalınca kapatılacak (telefon kapalı olsa da sürer)."
+                        } else {
+                            "Tüm işler bitince bilgisayar kapatılacak (telefon kapalı olsa da sürer)."
+                        },
                     )
                 }
                 .onFailure { e ->
@@ -662,7 +695,8 @@ class AppViewModel(
     fun cancelShutdown() {
         val plan = _shutdownPlan.value ?: return
         val current = api
-        val id = plan.substringAfter('|', "")
+        // Yeni biçimde id ikinci alan: "<force|soft>|<id>|<HH:MM|->|<armedAt>".
+        val id = plan.split('|').getOrNull(1).orEmpty()
         _shutdownPlan.value = null
         viewModelScope.launch {
             settings.setShutdownPlan(null)
@@ -680,10 +714,124 @@ class AppViewModel(
         }
     }
 
+    // ------------------------------------------ gözcü canlılık / bayat plan
+
+    /** Gözcü durumunu sorar: hedef oturumda `-Status` çalıştırır, mesaj akışından JSON raporu okur. */
+    fun refreshShutdownStatus() {
+        val current = api ?: return
+        viewModelScope.launch {
+            try {
+                val id = shutdownTargetId(current)
+                if (id == null) {
+                    _watchStatus.value = null
+                } else {
+                    runCatching { current.shell(id, statusCmd) }
+                    var found: WatchStatus? = null
+                    var attempt = 0
+                    while (found == null && attempt < 5) {
+                        kotlinx.coroutines.delay(400)
+                        // Yeni pencere kullan: yoğun oturumda eski 200 mesajlık
+                        // pencereye kabuk çalışması hiç düşmeyebilir.
+                        val msgs = runCatching { current.messagesRecent(id, 30) }.getOrDefault(emptyList())
+                        found = parseStatusFromMessages(msgs)
+                        attempt++
+                    }
+                    _watchStatus.value = found
+                }
+            } catch (_: Exception) {
+                // Yut — durum bilinmiyor olarak kalır.
+            } finally {
+                maybeClearStalePlan()
+            }
+        }
+    }
+
+    private suspend fun shutdownTargetId(current: Api): String? {
+        val fromPlan = _shutdownPlan.value?.split('|')?.getOrNull(1)?.takeIf { it.isNotBlank() }
+        if (fromPlan != null) return fromPlan
+        val inMemory = _sessions.value.sessions.firstOrNull()?.str("id")
+        if (inMemory != null) return inMemory
+        return runCatching { current.sessions(1) }.getOrDefault(emptyList()).firstOrNull()?.str("id")
+    }
+
+    private fun parseStatusFromMessages(msgs: List<JsonObject>): WatchStatus? {
+        // Siradan bagimsiz: eslesen kabuk mesajlari arasindan EN YENISINI sec
+        // (API sirasi degisken olabilir; lastOrNull eski okumaya dusebilirdi).
+        val msg = msgs.filter { m ->
+            m.str("type") == "shell" &&
+                m.str("command")?.contains("-Status") == true &&
+                m.str("status") == "exited"
+        }.maxByOrNull { it.obj("time").num("created") ?: 0.0 } ?: return null
+        val out = msg.obj("output").str("output") ?: return null
+        val line = out.lineSequence().map { it.trim() }.lastOrNull { it.startsWith("{") } ?: return null
+        return runCatching {
+            val j = kotlinx.serialization.json.Json.parseToJsonElement(line).obj()
+            WatchStatus(
+                live = j.str("live") == "true",
+                pid = j.num("pid")?.toInt(),
+                uptimeMinutes = j.num("uptimeMinutes")?.toInt(),
+                lastSayim = j.str("lastSayim"),
+                lastSayimAt = j.str("lastSayimAt"),
+                lastLogLine = j.str("lastLogLine"),
+                lastLogAt = j.str("lastLogAt"),
+                shutdownSent = j.str("shutdownSent") == "true",
+            )
+        }.getOrNull()
+    }
+
+    /**
+     * Bayat kapatma planını temizler. Yalnızca KESİN olumsuz okumada temizler:
+     * sorgu başarısızsa (durum null) hiçbir şey yapmaz. Yeni biçimde iki koşuldan
+     * biri gerekir: betik aramadan sonra çalışıp ölmüş (log aramadan yeni) ya da
+     * 30 dk'dır hiç başlamamış. Böylece "ajan henüz başlatmadı" durumunda banner
+     * yanlışlıkla temizlenmez. Eski biçimde (armedAt=0) 3 ardışık kesin okuma yeter.
+     */
+    fun maybeClearStalePlan() {
+        val plan = _shutdownPlan.value ?: return
+        val st = _watchStatus.value ?: return        // bilinmiyor -> kanıt yok, temizleme
+        if (st.live) return
+        if (st.shutdownSent) {
+            // Mevcut koşu kapatma komutunu göndermiş: görev TAMAMLANDI (makine kapandı/kapanıyor).
+            clearStalePlan(plan, "Kapatma görevi tamamlandı", "Kapatma komutu gönderildi — bilgisayar kapandı.")
+            return
+        }
+        val armedAt = plan.split('|').getOrNull(3)?.toLongOrNull() ?: 0L
+        if (armedAt == 0L) {
+            // Eski biçim plan (önceki uygulamadan kalmış): tek kesin okuma yeter.
+            clearStalePlan(plan, "Bayat kapatma görevi temizlendi", "Gözcü çalışmıyor — kapatma OLMAYACAK.")
+            return
+        }
+        val elapsed = System.currentTimeMillis() - armedAt
+        val ranSinceArm = parseLogTime(st.lastLogAt)?.let { it > armedAt - 60_000 } ?: false
+        if (ranSinceArm || elapsed > 30 * 60_000) {
+            clearStalePlan(plan, "Bayat kapatma görevi temizlendi", "Gözcü çalışmıyor — kapatma OLMAYACAK.")
+        }
+    }
+
+    /** "yyyy-MM-dd HH:mm:ss" (PC saati) -> epoch ms; bilinmiyorsa null. */
+    private fun parseLogTime(s: String?): Long? {
+        if (s.isNullOrBlank()) return null
+        return runCatching {
+            java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US).parse(s)?.time
+        }.getOrNull()
+    }
+
+    private fun clearStalePlan(expected: String, title: String, text: String) {
+        if (_shutdownPlan.value != expected) return
+        _shutdownPlan.value = null
+        viewModelScope.launch { settings.setShutdownPlan(null) }
+        notify(41, title, text)
+    }
+
     /** İptal komutu — "kapatma" skill'indeki betik; gözcüyü durdurur, bekleyen kapatmayı iptal eder. */
     private val cancelCmd =
         "powershell -NoProfile -ExecutionPolicy Bypass -File " +
             "\"C:\\Users\\YILMAZ\\.config\\opencode\\skills\\kapatma\\shutdown-watch.ps1\" -Cancel"
+
+    /** Canlılık sorgusu — gözcüyü değiştirmez, tek satır JSON rapor döndürür. */
+    private val statusCmd =
+        "powershell -NoProfile -ExecutionPolicy Bypass -File " +
+            "\"C:\\Users\\YILMAZ\\.config\\opencode\\skills\\kapatma\\shutdown-watch.ps1\" -Status"
 
     /**
      * Hedef oturuma gönderilecek gözlemci görev metni. Düşünmeyi kaldıran yapıda:
@@ -691,10 +839,11 @@ class AppViewModel(
      * betikte ([shutdown-watch.ps1]) yapılır. Kurallar (tek seferlik, döngü yok)
      * hem skill'de hem burada yazılıdır.
      */
-    private fun shutdownTask(sessionID: String, force: Boolean): String {
+    private fun shutdownTask(sessionID: String, force: Boolean, at: String? = null): String {
         val script = "C:\\Users\\YILMAZ\\.config\\opencode\\skills\\kapatma\\shutdown-watch.ps1"
         val forceArg = if (force) " -Force" else ""
-        val startCmd = "powershell -NoProfile -ExecutionPolicy Bypass -File \"$script\" -Sid \"$sessionID\"$forceArg"
+        val atArg = if (at != null) " -At \"$at\"" else ""
+        val startCmd = "powershell -NoProfile -ExecutionPolicy Bypass -File \"$script\" -Sid \"$sessionID\"$forceArg$atArg"
         return """
 [GÖREV: BİLGİSAYARI KAPAT — TEK SEFERLİK GÖZLEMCİ] (skill: kapatma)
 

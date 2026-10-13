@@ -6,6 +6,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -42,9 +44,11 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -56,12 +60,14 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import dev.opencode.mobile.R
 import dev.opencode.mobile.SessionsState
+import dev.opencode.mobile.WatchStatus
 import dev.opencode.mobile.net.num
 import dev.opencode.mobile.net.obj
 import dev.opencode.mobile.net.str
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import kotlinx.coroutines.delay
 import kotlinx.serialization.json.JsonObject
 
 /** Liste filtresi: üst düzey (varsayılan) / tümü / yalnızca çalışanlar / son 24 saat. */
@@ -86,8 +92,13 @@ fun SessionsScreen(
     onRename: (id: String, title: String) -> Unit,
     onFork: (String) -> Unit,
     shutdownArmed: Boolean,
-    onArmShutdown: (force: Boolean, targetId: String?) -> Unit,
+    onArmShutdown: (force: Boolean, targetId: String?, at: String?) -> Unit,
     onCancelShutdown: () -> Unit,
+    /** Plan varsa "HH:MM" (yoksa/şimdiyse null) — banner'da "en erken" göstergesi için. */
+    shutdownAt: String? = null,
+    /** Gözcünün son canlılık durumu (bilinmiyorsa null). */
+    watchStatus: WatchStatus? = null,
+    onRefreshWatch: () -> Unit = {},
 ) {
     var showNew by remember { mutableStateOf(false) }
     var showShutdown by remember { mutableStateOf(false) }
@@ -140,6 +151,7 @@ fun SessionsScreen(
 
                 // kapatma görevi bandı
                 if (shutdownArmed) {
+                    val atLabel = shutdownAt?.takeIf { it.isNotBlank() && it != "-" }
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -148,7 +160,11 @@ fun SessionsScreen(
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Text(
-                            "⏱ kapatma görevi gönderildi — tüm işler bitince bilgisayar kapatılacak (telefon kapalı olsa da sürer)",
+                            if (atLabel != null) {
+                                "⏱ kapatma görevi aktif — oturumlar boşalınca kapanacak (en erken $atLabel)"
+                            } else {
+                                "⏱ kapatma görevi gönderildi — tüm işler bitince bilgisayar kapatılacak (telefon kapalı olsa da sürer)"
+                            },
                             color = Oc.warn,
                             style = MaterialTheme.typography.labelSmall,
                             modifier = Modifier.weight(1f),
@@ -279,9 +295,11 @@ fun SessionsScreen(
                 ShutdownDialog(
                     armed = shutdownArmed,
                     sessions = state.sessions,
-                    onArm = { force, targetId ->
+                    watchStatus = watchStatus,
+                    onRefreshWatch = onRefreshWatch,
+                    onArm = { force, targetId, at ->
                         showShutdown = false
-                        onArmShutdown(force, targetId)
+                        onArmShutdown(force, targetId, at)
                     },
                     onCancel = {
                         showShutdown = false
@@ -518,15 +536,26 @@ private fun TargetPicker(
     }
 }
 
-/** Kapatma görevi diyaloğu: kur (hedef oturum seçilebilir) / iptal et. */
+/** Kapatma görevi diyaloğu: kur (hedef oturum + zaman seçilebilir) / iptal et. */
 @Composable
 private fun ShutdownDialog(
     armed: Boolean,
     sessions: List<JsonObject>,
-    onArm: (force: Boolean, targetId: String?) -> Unit,
+    watchStatus: WatchStatus?,
+    onRefreshWatch: () -> Unit,
+    onArm: (force: Boolean, targetId: String?, at: String?) -> Unit,
     onCancel: () -> Unit,
     onDismiss: () -> Unit,
 ) {
+    // Diyalog açıkken canlılığı ilk açılışta ve 30 sn'de bir otomatik yenile.
+    LaunchedEffect(Unit) {
+        onRefreshWatch()
+        while (true) {
+            delay(30_000)
+            onRefreshWatch()
+        }
+    }
+
     if (armed) {
         AlertDialog(
             onDismissRequest = onDismiss,
@@ -546,8 +575,16 @@ private fun ShutdownDialog(
             },
         )
     } else {
-        var force by remember { mutableStateOf(false) }
+        var force by rememberSaveable { mutableStateOf(false) }
         var target by remember { mutableStateOf<JsonObject?>(null) }
+        var timeSel by rememberSaveable { mutableStateOf("now") }
+        var customHour by rememberSaveable { mutableStateOf(3) }
+        var customMinute by rememberSaveable { mutableStateOf(0) }
+        val at = when (timeSel) {
+            "now" -> null
+            "custom" -> "%02d:%02d".format(customHour, customMinute)
+            else -> timeSel
+        }
         AlertDialog(
             onDismissRequest = onDismiss,
             title = { Text("Bilgisayarı kapat") },
@@ -561,6 +598,36 @@ private fun ShutdownDialog(
                     )
                     Spacer(Modifier.height(8.dp))
                     Text(
+                        "Kapatma zamanı",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = Oc.dim,
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        TimeChip("Şimdi (işler bitince)", timeSel == "now") { timeSel = "now" }
+                        listOf("00:00", "01:00", "02:00", "03:00").forEach { t ->
+                            TimeChip(t, timeSel == t) { timeSel = t }
+                        }
+                        TimeChip("Özel…", timeSel == "custom") { timeSel = "custom" }
+                    }
+                    if (timeSel == "custom") {
+                        Spacer(Modifier.height(6.dp))
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
+                            NumberPicker(customHour, (0..23).toList()) { customHour = it }
+                            Text(":", color = Oc.dim)
+                            NumberPicker(customMinute, (0..55 step 5).toList()) { customMinute = it }
+                        }
+                    }
+                    Spacer(Modifier.height(10.dp))
+                    Text(
                         "Hedef oturum",
                         style = MaterialTheme.typography.labelMedium,
                         color = Oc.dim,
@@ -572,6 +639,8 @@ private fun ShutdownDialog(
                         onPick = { target = it },
                     )
                     Spacer(Modifier.height(8.dp))
+                    WatchStatusCard(status = watchStatus, onRefresh = onRefreshWatch)
+                    Spacer(Modifier.height(8.dp))
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Checkbox(checked = force, onCheckedChange = { force = it })
                         Text("Açık programları zorla kapat (/f)")
@@ -579,7 +648,7 @@ private fun ShutdownDialog(
                 }
             },
             confirmButton = {
-                TextButton(onClick = { onArm(force, target?.str("id")) }) {
+                TextButton(onClick = { onArm(force, target?.str("id"), at) }) {
                     Text("Kapatmayı kur", color = Oc.warn)
                 }
             },
@@ -587,6 +656,74 @@ private fun ShutdownDialog(
                 TextButton(onClick = onDismiss) { Text("Vazgeç", color = Oc.dim) }
             },
         )
+    }
+}
+
+/** Kapatma zamanı çipi — liste filtresi çipleriyle aynı görünüm. */
+@Composable
+private fun TimeChip(label: String, selected: Boolean, onClick: () -> Unit) {
+    Text(
+        label,
+        color = if (selected) Oc.bg else Oc.dim,
+        style = MaterialTheme.typography.labelSmall,
+        modifier = Modifier
+            .clip(RoundedCornerShape(3.dp))
+            .background(if (selected) Oc.accent else Oc.panelAlt)
+            .border(1.dp, if (selected) Oc.accent else Oc.border, RoundedCornerShape(3.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 8.dp, vertical = 4.dp),
+    )
+}
+
+/** İki haneli sayı seçici (saat / dakika). */
+@Composable
+private fun NumberPicker(value: Int, options: List<Int>, onPick: (Int) -> Unit) {
+    var expanded by remember { mutableStateOf(false) }
+    Box {
+        OutlinedButton(onClick = { expanded = true }) { Text("%02d".format(value)) }
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            options.forEach { o ->
+                DropdownMenuItem(
+                    text = { Text("%02d".format(o)) },
+                    onClick = {
+                        onPick(o)
+                        expanded = false
+                    },
+                )
+            }
+        }
+    }
+}
+
+/** Gözcünün canlılık durumu + "Yenile" tuşu. */
+@Composable
+private fun WatchStatusCard(status: WatchStatus?, onRefresh: () -> Unit) {
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+            Text("Gözcü", style = MaterialTheme.typography.labelMedium, color = Oc.dim)
+            val text = when {
+                status == null -> "Gözcü durumu bilinmiyor"
+                !status.live -> "Gözcü: çalışmıyor — kapatma OLMAZ"
+                else -> buildString {
+                    append("Gözcü: çalışıyor")
+                    val parts = mutableListOf<String>()
+                    status.pid?.let { parts += "PID $it" }
+                    status.uptimeMinutes?.let { parts += "$it dk" }
+                    if (parts.isNotEmpty()) append(" (${parts.joinToString(" · ")})")
+                    status.lastSayimAt?.let { append(" · son tur $it") }
+                }
+            }
+            Text(
+                text,
+                color = when {
+                    status == null -> Oc.dim
+                    status.live -> Oc.accent
+                    else -> Oc.err
+                },
+                style = MaterialTheme.typography.bodySmall,
+            )
+        }
+        TextButton(onClick = onRefresh) { Text("Yenile", color = Oc.dim) }
     }
 }
 

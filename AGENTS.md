@@ -40,3 +40,16 @@ skill'deki betik yolunu ve bu kuralların tamamını koru.
   derleme + kurulum + kontrol ajanın sorumluluğundadır.
 - Kullanıcı arayüzü metinleri Türkçedir; kod içi yorumlar da Türkçe yazılır.
 - Commit mesajları tek satır, Türkçe, neyin değiştiğini açıkça söyleyecek.
+
+## Orkestra (çok ajanlı düzen)
+
+- **Kadro**: Zeynep (keşif, salt okunur), Kerem (belge/*.md), Selin (test), Emre
+  (teşhis, salt okunur), Deniz (denetim), Mert (kod yazımı: app/src).
+- Aynı dosyada aynı anda yalnızca **tek yazar** çalışır; eşzamanlı yazma çakışmaya
+  yol açar, önlenir.
+- Commit/birleştirme (merge) işlemleri yalnızca **şef (orkestratör)** tarafından yapılır;
+  alt ajanlar commit/merge yapmaz.
+- Tüm alt ajanlar **düşük düşünce kuvveti (#low)** ile çalışır.
+- Küçük işler küçük modellere devredilir; büyük/karmaşık işler daha güçlü modele gider.
+- Yazma yapan ajan kendi işini denetlemez; denetim (review) her zaman **Deniz**'de
+  toplanır.

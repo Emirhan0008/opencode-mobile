@@ -92,6 +92,15 @@ class Api(baseUrl: String, private val token: String) {
     suspend fun messages(id: String, limit: Int = 200): List<JsonObject> =
         get("/api/session/$id/message?limit=$limit&order=asc").obj().arr("data").map { it.obj() }
 
+    /**
+     * En yeni mesajlar başta olmak üzere dar pencere — durum sorguları için.
+     * Yoğun oturumlarda [messages] en eski 200 mesajla sınırlıdır; yeni kabuk
+     * çalışması pencereye hiç girmezdi (bayat plan temizliği bu yüzden sessiz
+     * başarısız oluyordu).
+     */
+    suspend fun messagesRecent(id: String, limit: Int = 30): List<JsonObject> =
+        get("/api/session/$id/message?limit=$limit&order=desc").obj().arr("data").map { it.obj() }
+
     suspend fun prompt(id: String, text: String): JsonElement =
         post("/api/session/$id/prompt", buildJsonObject { put("text", text) })
 

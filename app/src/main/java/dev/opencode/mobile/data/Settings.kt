@@ -20,7 +20,11 @@ class Settings(private val context: Context) {
     private val keyDarkTheme = booleanPreferencesKey("dark_theme")
     private val keyShutdownPlan = stringPreferencesKey("shutdown_plan")
 
-    /** Planlanmış kapatma: "soft" | "force" | null (kurulu değil). */
+    /**
+     * Planlanmış kapatma:
+     * yeni biçim `"<force|soft>|<oturumID>|<HH:MM veya ->|<armedAtEpochMs>"`,
+     * eski biçim `"soft" | "force"` (geriye dönük okunur) | null (kurulu değil).
+     */
     val shutdownPlan: Flow<String?> = context.dataStore.data.map { prefs -> prefs[keyShutdownPlan] }
 
     val connection: Flow<Connection?> = context.dataStore.data.map { prefs ->
