@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -104,71 +105,77 @@ fun SessionScreen(
     Column(Modifier.fillMaxSize().background(Oc.bg)) {
 
         // ------------------------------------------------------------- top bar
-        Row(
+        Column(
             Modifier
                 .fillMaxWidth()
                 .background(Oc.panel)
-                .border(1.dp, Oc.border)
-                .padding(horizontal = 6.dp, vertical = 6.dp),
-            verticalAlignment = Alignment.CenterVertically,
+                .border(1.dp, Oc.border),
         ) {
-            IconButton(onClick = onBack) {
-                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "geri", tint = Oc.text)
-            }
-            Image(
-                painter = painterResource(R.drawable.ic_logo),
-                contentDescription = "OpenCode Mobile",
-                modifier = Modifier.size(24.dp),
-            )
-            Spacer(Modifier.width(8.dp))
-            Column(Modifier.weight(1f)) {
-                Text(
-                    state.session?.str("title")?.ifBlank { null } ?: state.session?.str("id") ?: "…",
-                    style = MaterialTheme.typography.titleMedium,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 6.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                IconButton(onClick = onBack) {
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "geri", tint = Oc.text)
+                }
+                Image(
+                    painter = painterResource(R.drawable.ic_logo),
+                    contentDescription = "OpenCode Mobile",
+                    modifier = Modifier.size(24.dp),
                 )
-                val model = state.session?.obj("model")
-                Text(
-                    buildString {
-                        append(state.session?.obj("location")?.str("directory") ?: "?")
-                        append("  ·  $").append("%.3f".format(state.session?.num("cost") ?: 0.0))
-                    },
-                    style = MaterialTheme.typography.labelSmall,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                val agent = state.session?.str("agent")
-                if (agent != null || model?.str("id") != null) {
+                Spacer(Modifier.width(8.dp))
+                // başlık satırı: tam genişlik, uzun isimler 2 satıra kadar sığar
+                Column(Modifier.weight(1f)) {
                     Text(
-                        "${agent ?: "?"}  ·  ${model?.str("providerID") ?: "?"}/${model?.str("id") ?: "?"}",
-                        color = Oc.blue,
+                        state.session?.str("title")?.ifBlank { null } ?: state.session?.str("id") ?: "…",
+                        style = MaterialTheme.typography.titleMedium,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Text(
+                        buildString {
+                            append(state.session?.obj("location")?.str("directory") ?: "?")
+                            append("  ·  $").append("%.3f".format(state.session?.num("cost") ?: 0.0))
+                        },
                         style = MaterialTheme.typography.labelSmall,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
                 }
-            }
-            AgentPicker(
-                current = state.session?.str("agent"),
-                agents = agents,
-                onPick = onSwitchAgent,
-            )
-            ModelPicker(
-                current = state.session?.obj("model"),
-                models = models,
-                onPick = onSwitchModel,
-            )
-            if (state.busy) {
-                Text(
-                    if (state.childBusy) "⏳ alt ajan" else "⏳",
-                    color = if (state.childBusy) Oc.purple else Oc.text,
-                    style = MaterialTheme.typography.labelSmall,
-                    modifier = Modifier.padding(end = 4.dp),
-                )
-                IconButton(onClick = onInterrupt) {
-                    Icon(Icons.Default.Stop, contentDescription = "durdur", tint = Oc.err)
+                if (state.busy) {
+                    Text(
+                        if (state.childBusy) "⏳ alt ajan" else "⏳",
+                        color = if (state.childBusy) Oc.purple else Oc.text,
+                        style = MaterialTheme.typography.labelSmall,
+                        modifier = Modifier.padding(end = 4.dp),
+                    )
+                    IconButton(onClick = onInterrupt) {
+                        Icon(Icons.Default.Stop, contentDescription = "durdur", tint = Oc.err)
+                    }
                 }
+            }
+
+            // ajan / model seçicileri — kendi satırlarında, ismi sıkıştırmazlar
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(start = 6.dp, end = 6.dp, bottom = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                AgentPicker(
+                    current = state.session?.str("agent"),
+                    agents = agents,
+                    onPick = onSwitchAgent,
+                )
+                Spacer(Modifier.width(6.dp))
+                ModelPicker(
+                    current = state.session?.obj("model"),
+                    models = models,
+                    onPick = onSwitchModel,
+                )
+                Spacer(Modifier.weight(1f))
             }
         }
 
@@ -274,7 +281,10 @@ private fun AgentPicker(current: String?, agents: List<JsonObject>, onPick: (Str
             current ?: "agent",
             color = Oc.purple,
             style = MaterialTheme.typography.labelLarge,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
             modifier = Modifier
+                .widthIn(max = 130.dp)
                 .clip(RoundedCornerShape(3.dp))
                 .border(1.dp, Oc.border, RoundedCornerShape(3.dp))
                 .clickable { open = true }
