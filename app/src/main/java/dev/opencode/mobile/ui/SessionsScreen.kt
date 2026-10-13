@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
@@ -35,6 +36,7 @@ import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
@@ -60,6 +62,7 @@ import dev.opencode.mobile.net.str
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import kotlinx.serialization.json.JsonObject
 
 /** Liste filtresi: üst düzey (varsayılan) / tümü / yalnızca çalışanlar / son 24 saat. */
 enum class SessionFilter(val label: String) {
@@ -83,7 +86,7 @@ fun SessionsScreen(
     onRename: (id: String, title: String) -> Unit,
     onFork: (String) -> Unit,
     shutdownArmed: Boolean,
-    onArmShutdown: (force: Boolean) -> Unit,
+    onArmShutdown: (force: Boolean, targetId: String?) -> Unit,
     onCancelShutdown: () -> Unit,
 ) {
     var showNew by remember { mutableStateOf(false) }
@@ -275,9 +278,10 @@ fun SessionsScreen(
             if (showShutdown) {
                 ShutdownDialog(
                     armed = shutdownArmed,
-                    onArm = { force ->
+                    sessions = state.sessions,
+                    onArm = { force, targetId ->
                         showShutdown = false
-                        onArmShutdown(force)
+                        onArmShutdown(force, targetId)
                     },
                     onCancel = {
                         showShutdown = false
@@ -469,11 +473,57 @@ private fun SessionRow(
     }
 }
 
-/** Kapatma planı diyaloğu: kur / iptal et. */
+/** Kapatma görevinin gönderileceği oturumu seçer (otomatik = uygulama seçer). */
+@Composable
+private fun TargetPicker(
+    sessions: List<JsonObject>,
+    target: JsonObject?,
+    onPick: (JsonObject?) -> Unit,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    val candidates = sessions.filter { it.str("parentID") == null }
+    Box {
+        OutlinedButton(onClick = { expanded = true }) {
+            Text(
+                target?.str("title") ?: "otomatik (“opencode-mobile” ya da en son güncellenen)",
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.widthIn(max = 240.dp),
+            )
+        }
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            DropdownMenuItem(
+                text = { Text("otomatik") },
+                onClick = {
+                    onPick(null)
+                    expanded = false
+                },
+            )
+            candidates.forEach { s ->
+                DropdownMenuItem(
+                    text = {
+                        Text(
+                            s.str("title") ?: s.str("id") ?: "?",
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    },
+                    onClick = {
+                        onPick(s)
+                        expanded = false
+                    },
+                )
+            }
+        }
+    }
+}
+
+/** Kapatma görevi diyaloğu: kur (hedef oturum seçilebilir) / iptal et. */
 @Composable
 private fun ShutdownDialog(
     armed: Boolean,
-    onArm: (Boolean) -> Unit,
+    sessions: List<JsonObject>,
+    onArm: (force: Boolean, targetId: String?) -> Unit,
     onCancel: () -> Unit,
     onDismiss: () -> Unit,
 ) {
@@ -497,16 +547,29 @@ private fun ShutdownDialog(
         )
     } else {
         var force by remember { mutableStateOf(false) }
+        var target by remember { mutableStateOf<JsonObject?>(null) }
         AlertDialog(
             onDismissRequest = onDismiss,
             title = { Text("Bilgisayarı kapat") },
             text = {
                 Column {
                     Text(
-                        "Tüm oturumlar (alt ajanlar dahil) bittiğinde bilgisayar kapatılsın. " +
-                            "Görev, “opencode-mobile” oturumu varsa ona, yoksa en son güncellenen " +
-                            "oturuma gözlemci olarak gönderilir; telefon kapalı olsa da sürer. " +
-                            "Kapatma komutu (shutdown.exe /s /t 120) yalnızca bir kez çalıştırılır.",
+                        "Tüm işler bittiğinde bilgisayar kapatılsın. Görev, seçilen oturuma " +
+                            "gözlemci olarak gönderilir ve orada bekler; telefon kapalı olsa da " +
+                            "sürer. Kapatma komutu (shutdown.exe /s /t 120) yalnızca bir kez " +
+                            "çalıştırılır.",
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        "Hedef oturum",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = Oc.dim,
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    TargetPicker(
+                        sessions = sessions,
+                        target = target,
+                        onPick = { target = it },
                     )
                     Spacer(Modifier.height(8.dp))
                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -516,7 +579,9 @@ private fun ShutdownDialog(
                 }
             },
             confirmButton = {
-                TextButton(onClick = { onArm(force) }) { Text("Kapatmayı kur", color = Oc.warn) }
+                TextButton(onClick = { onArm(force, target?.str("id")) }) {
+                    Text("Kapatmayı kur", color = Oc.warn)
+                }
             },
             dismissButton = {
                 TextButton(onClick = onDismiss) { Text("Vazgeç", color = Oc.dim) }

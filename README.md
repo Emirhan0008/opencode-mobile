@@ -23,12 +23,15 @@ TUI estetiğinde: koyu zemin, monospace yazılar, kutulu paneller.
   (`/init`, `/review`, uzantı komutları…) aranabilir listeler; isteğe bağlı bağımsız
   değişkenle doğrudan oturumda çalıştırır.
 - **Kaydırma ile gezinme**: mesaj akışında sağa/sola kaydırınca önceki/sonraki oturuma geçilir.
-- **Kapatma görevi**: ⏻ düğmesiyle "tüm oturumlar (alt ajanlar dahil) bitince bilgisayarı kapat"
-  görevi kurulur. Görev "opencode-mobile" oturumu varsa ona, yoksa en son güncellenen oturuma
-  **gözlemci prompt olarak** gönderilir ve bilgisayar tarafında yürütülür: oturum aktiflikleri
-  boşalana kadar bekler, sonra kapatma komutunu (`shutdown.exe /s /t 120`, istenirse `/f` ile
-  programları zorla kapatarak) **yalnızca bir kez** çalıştırır. Telefon kapalı olsa da uygulama
-  kapalı olsa da sürer; iptal edilebilir (gözlemci oturuma iptal mesajı + kesme gönderilir).
+- **Kapatma görevi**: ⏻ düğmesiyle "tüm işler bitince bilgisayarı kapat" görevi kurulur.
+  Görev **seçtiğiniz oturuma** gözlemci prompt olarak gönderilir (hedef diyalogdan seçilir;
+  "otomatik" ise "opencode-mobile" oturumu, yoksa en son güncellenen oturum) ve bilgisayar
+  tarafında yürütülür: aktiflikler boşalana kadar bekler, sonra kapatma komutunu
+  (`shutdown.exe /s /t 120`, istenirse `/f` ile programları zorla kapatarak) **yalnızca bir kez**
+  çalıştırır. Telefon kapalı olsa da uygulama kapalı olsa da sürer; iptal edilebilir
+  (gözlemci oturuma iptal mesajı + kesme gönderilir). Görev kuralları global `kapatma`
+  skill'inde + `scripts/` yerine `~/.config/opencode/skills/kapatma/shutdown-watch.ps1`
+  betiğindedir.
 - **Uzun basma menüleri**:
   - Oturum satırı: başlık/ID kopyalama, yeniden adlandırma, çoğaltma (fork), silme (onaylı).
   - Mesaj kartı: metni kopyalama, yanıta alıntı olarak ekleme, o noktaya kadar geri alma

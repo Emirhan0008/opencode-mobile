@@ -617,21 +617,26 @@ class AppViewModel(
      * gönderir. Görev bilgisayar tarafında (OpenCode oturumunda) yürütüldüğü için
      * telefon kapalı olsa da uygulama kapalı olsa da sürer.
      *
-     * Hedef: başlığında "opencode-mobile" geçen oturum; yoksa en son güncellenen oturum.
+     * Hedef: [targetId] verilmişse o oturum; yoksa başlığında "opencode-mobile"
+     * geçen oturum, o da yoksa en son güncellenen oturum.
      * [force] true ise kapatma komutu çalışan programları zorla kapatır (`shutdown /f`).
      *
      * Görev TEK SEFERLİKTİR: prompt bunu açıkça söyler — oturum kapatma komutunu en
      * fazla bir kez çalıştırır, döngüye girmez. (Geçmişte bir oturum bunu sürekli
      * tekrarlayan bir döngüye sokmuştu; prompt'taki kurallar bunu engeller.)
      */
-    fun armShutdown(force: Boolean) {
+    fun armShutdown(force: Boolean, targetId: String? = null) {
         val current = api ?: return
         viewModelScope.launch {
-            val sessions = runCatching { current.sessions(50) }.getOrDefault(emptyList())
-            val target =
-                sessions.firstOrNull { it.str("title")?.contains("opencode-mobile", true) == true }
-                    ?: sessions.maxByOrNull { it.obj("time").num("updated") ?: 0.0 }
-            val id = target?.str("id")
+            val id = if (!targetId.isNullOrBlank()) {
+                targetId
+            } else {
+                val sessions = runCatching { current.sessions(50) }.getOrDefault(emptyList())
+                val target =
+                    sessions.firstOrNull { it.str("title")?.contains("opencode-mobile", true) == true }
+                        ?: sessions.maxByOrNull { it.obj("time").num("updated") ?: 0.0 }
+                target?.str("id")
+            }
             if (id == null) {
                 notify(41, "Kapatma görevi kurulamadı", "Hedef oturum bulunamadı.")
                 return@launch
