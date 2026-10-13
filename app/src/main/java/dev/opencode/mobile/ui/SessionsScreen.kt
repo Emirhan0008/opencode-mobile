@@ -135,7 +135,7 @@ fun SessionsScreen(
                     TextButton(onClick = onDisconnect) { Text("çıkış", color = Oc.dim) }
                 }
 
-                // kapatma planı bandı
+                // kapatma görevi bandı
                 if (shutdownArmed) {
                     Row(
                         modifier = Modifier
@@ -145,7 +145,7 @@ fun SessionsScreen(
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Text(
-                            "⏱ kapanış planlandı — tüm oturumlar (alt ajanlar dahil) bitince bilgisayar kapatılacak",
+                            "⏱ kapatma görevi gönderildi — tüm işler bitince bilgisayar kapatılacak (telefon kapalı olsa da sürer)",
                             color = Oc.warn,
                             style = MaterialTheme.typography.labelSmall,
                             modifier = Modifier.weight(1f),
@@ -480,11 +480,12 @@ private fun ShutdownDialog(
     if (armed) {
         AlertDialog(
             onDismissRequest = onDismiss,
-            title = { Text("Kapatma planlandı") },
+            title = { Text("Kapatma görevi gönderildi") },
             text = {
                 Text(
-                    "Tüm oturumlar (alt ajanlar dahil) bittiğinde bilgisayar kapatılacak. " +
-                        "Kapatma komutu “opencode-mobile” oturumu varsa ona, yoksa en son aktif oturuma gönderilir.",
+                    "Tüm işler bittiğinde bilgisayar kapatılacak. Görev bilgisayar tarafındaki " +
+                        "OpenCode oturumunda sürer — telefon kapalı olsa da uygulama kapalı olsa da " +
+                        "işlenir. Kapatma komutu yalnızca BİR KEZ çalıştırılır.",
                 )
             },
             confirmButton = {
@@ -503,8 +504,9 @@ private fun ShutdownDialog(
                 Column {
                     Text(
                         "Tüm oturumlar (alt ajanlar dahil) bittiğinde bilgisayar kapatılsın. " +
-                            "Komut “opencode-mobile” oturumu varsa ona, yoksa en son aktif oturuma " +
-                            "bir kez gönderilir: shutdown.exe /s /t 120",
+                            "Görev, “opencode-mobile” oturumu varsa ona, yoksa en son güncellenen " +
+                            "oturuma gözlemci olarak gönderilir; telefon kapalı olsa da sürer. " +
+                            "Kapatma komutu (shutdown.exe /s /t 120) yalnızca bir kez çalıştırılır.",
                     )
                     Spacer(Modifier.height(8.dp))
                     Row(verticalAlignment = Alignment.CenterVertically) {

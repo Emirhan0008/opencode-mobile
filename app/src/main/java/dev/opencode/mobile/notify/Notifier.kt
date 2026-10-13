@@ -48,17 +48,4 @@ object Notifier {
         val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         manager.notify(id, notification)
     }
-
-    /** Servisler için kalıcı (süregelen) bildirim. */
-    fun ongoing(context: Context, title: String, text: String): android.app.Notification {
-        init(context)
-        return NotificationCompat.Builder(context, CHANNEL_ID)
-            .setSmallIcon(dev.opencode.mobile.R.drawable.ic_stat_phone)
-            .setContentTitle(title)
-            .setContentText(text)
-            .setStyle(NotificationCompat.BigTextStyle().bigText(text))
-            .setPriority(NotificationCompat.PRIORITY_LOW)
-            .setOngoing(true)
-            .build()
-    }
 }

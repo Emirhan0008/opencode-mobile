@@ -23,10 +23,12 @@ TUI estetiğinde: koyu zemin, monospace yazılar, kutulu paneller.
   (`/init`, `/review`, uzantı komutları…) aranabilir listeler; isteğe bağlı bağımsız
   değişkenle doğrudan oturumda çalıştırır.
 - **Kaydırma ile gezinme**: mesaj akışında sağa/sola kaydırınca önceki/sonraki oturuma geçilir.
-- **Kapatma planı**: ⏻ düğmesiyle "tüm oturumlar (alt ajanlar dahil) bitince bilgisayarı kapat"
-  bekçisi kurulur. Aktiflik sıfırlandığında kapatma komutu (`shutdown.exe /s /t 120`, istenirse
-  `/f` ile programları zorla kapatarak) "opencode-mobile" oturumuna, yoksa en son aktif oturuma
-  bir kez gönderilir. Ön planda servis + kalıcı bildirim ile gece boyunca izlenir; iptal edilebilir.
+- **Kapatma görevi**: ⏻ düğmesiyle "tüm oturumlar (alt ajanlar dahil) bitince bilgisayarı kapat"
+  görevi kurulur. Görev "opencode-mobile" oturumu varsa ona, yoksa en son güncellenen oturuma
+  **gözlemci prompt olarak** gönderilir ve bilgisayar tarafında yürütülür: oturum aktiflikleri
+  boşalana kadar bekler, sonra kapatma komutunu (`shutdown.exe /s /t 120`, istenirse `/f` ile
+  programları zorla kapatarak) **yalnızca bir kez** çalıştırır. Telefon kapalı olsa da uygulama
+  kapalı olsa da sürer; iptal edilebilir (gözlemci oturuma iptal mesajı + kesme gönderilir).
 - **Uzun basma menüleri**:
   - Oturum satırı: başlık/ID kopyalama, yeniden adlandırma, çoğaltma (fork), silme (onaylı).
   - Mesaj kartı: metni kopyalama, yanıta alıntı olarak ekleme, o noktaya kadar geri alma

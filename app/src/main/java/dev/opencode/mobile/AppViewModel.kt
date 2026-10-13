@@ -9,7 +9,6 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import dev.opencode.mobile.data.Settings
 import dev.opencode.mobile.net.Api
-import dev.opencode.mobile.net.ShutdownWatcherService
 import dev.opencode.mobile.net.OcEvent
 import dev.opencode.mobile.net.arr
 import dev.opencode.mobile.net.num
@@ -118,7 +117,7 @@ class AppViewModel(
     private val _darkTheme = MutableStateFlow(true)
     val darkTheme: StateFlow<Boolean> = _darkTheme.asStateFlow()
 
-    /** Planlanmış kapatma: "soft" | "force" | null. */
+    /** Gönderilmiş kapatma görevi: "soft|<oturumID>" | "force|<oturumID>" | null. */
     private val _shutdownPlan = MutableStateFlow<String?>(null)
     val shutdownPlan: StateFlow<String?> = _shutdownPlan.asStateFlow()
 
@@ -187,9 +186,9 @@ class AppViewModel(
         viewModelScope.launch {
             sseCall?.cancel()
             sseCall = null
+            cancelShutdown()
             api = null
             _connected.value = false
-            cancelShutdown()
             settings.clear()
         }
     }
@@ -611,25 +610,107 @@ class AppViewModel(
         target.str("id")?.let { openSession(it) }
     }
 
-    // --------------------------------------------- kapatma planı (bekçi servis)
+    // --------------------------------------- kapatma görevi (oturuma prompt)
 
     /**
-     * "Tüm oturumlar bitince bilgisayarı kapat" planını kurar.
-     * İzleme [ShutdownWatcherService] tarafından yapılır; [force] true ise
-     * kapatma komutu çalışan programları zorla kapatır (`shutdown /f`).
+     * "Tüm işler bitince bilgisayarı kapat" görevini hedef oturuma **prompt olarak**
+     * gönderir. Görev bilgisayar tarafında (OpenCode oturumunda) yürütüldüğü için
+     * telefon kapalı olsa da uygulama kapalı olsa da sürer.
+     *
+     * Hedef: başlığında "opencode-mobile" geçen oturum; yoksa en son güncellenen oturum.
+     * [force] true ise kapatma komutu çalışan programları zorla kapatır (`shutdown /f`).
+     *
+     * Görev TEK SEFERLİKTİR: prompt bunu açıkça söyler — oturum kapatma komutunu en
+     * fazla bir kez çalıştırır, döngüye girmez. (Geçmişte bir oturum bunu sürekli
+     * tekrarlayan bir döngüye sokmuştu; prompt'taki kurallar bunu engeller.)
      */
     fun armShutdown(force: Boolean) {
-        val plan = if (force) "force" else "soft"
-        _shutdownPlan.value = plan
-        viewModelScope.launch { settings.setShutdownPlan(plan) }
-        ShutdownWatcherService.start(appContext, force)
+        val current = api ?: return
+        viewModelScope.launch {
+            val sessions = runCatching { current.sessions(50) }.getOrDefault(emptyList())
+            val target =
+                sessions.firstOrNull { it.str("title")?.contains("opencode-mobile", true) == true }
+                    ?: sessions.maxByOrNull { it.obj("time").num("updated") ?: 0.0 }
+            val id = target?.str("id")
+            if (id == null) {
+                notify(41, "Kapatma görevi kurulamadı", "Hedef oturum bulunamadı.")
+                return@launch
+            }
+            runCatching { current.prompt(id, shutdownTask(id, force)) }
+                .onSuccess {
+                    val plan = (if (force) "force" else "soft") + "|" + id
+                    _shutdownPlan.value = plan
+                    viewModelScope.launch { settings.setShutdownPlan(plan) }
+                    notify(
+                        41,
+                        "Kapatma görevi gönderildi",
+                        "Tüm işler bitince bilgisayar kapatılacak (telefon kapalı olsa da sürer).",
+                    )
+                }
+                .onFailure { e ->
+                    notify(41, "Kapatma görevi gönderilemedi", e.message ?: "bilinmeyen hata")
+                }
+        }
     }
 
-    /** Planlanmış kapatmayı iptal eder. */
+    /** Gönderilmiş kapatma görevini iptal eder (gözlemci oturumu durdurur). */
     fun cancelShutdown() {
-        ShutdownWatcherService.cancel(appContext)
+        val plan = _shutdownPlan.value ?: return
+        val current = api
+        val id = plan.substringAfter('|', "")
         _shutdownPlan.value = null
-        viewModelScope.launch { settings.setShutdownPlan(null) }
+        viewModelScope.launch {
+            settings.setShutdownPlan(null)
+            if (current != null && id.isNotBlank()) {
+                runCatching { current.interrupt(id) }
+                runCatching {
+                    current.prompt(
+                        id,
+                        "[İPTAL] Kapatma görevi iptal edildi. Beklemeyi bırak; " +
+                            "shutdown komutunu ÇALIŞTIRMA, görevi hemen sonlandır.",
+                    )
+                }
+            }
+        }
+    }
+
+    /**
+     * Hedef oturuma gönderilecek gözlemci görev metni. Kendi kendine yeterli olmalı:
+     * bekleme, kontrol ve tek seferlik kapatma kurallarının tamamını içerir.
+     */
+    private fun shutdownTask(sessionID: String, force: Boolean): String {
+        val cmd = if (force) "shutdown.exe /s /f /t 120" else "shutdown.exe /s /t 120"
+        return """
+[GÖREV: BİLGİSAYARI KAPAT — TEK SEFERLİK GÖZLEMCİ]
+
+Amaç: Diğer tüm OpenCode işleri bittikten sonra bu bilgisayarı kapatmak.
+
+KURALLAR (kesinlikle uy):
+1. Bu görev TEK SEFERLİKTİR. Kapatma komutunu EN FAZLA BİR KEZ çalıştır.
+2. ASLA döngüye girme: kapatmayı periyodik tekrarlama, kendini yeniden tetikleme,
+   bu görevi başka zamanlarda kendiliğinden uygulama. (Geçmişte bir oturum bunu
+   sürekli tekrarlayan bir döngüye soktu ve bilgisayar defalarca kendiliğinden kapandı
+   — bu bir HATADIR, tekrarlanmayacak.)
+3. Kapatma yalnızca bu görevle olur; sonradan gelen istekler otonom kapatma tetiklemez.
+4. Telefon veya uygulama kapalı olsa da görevi SÜRDÜR; beklemeyi bırakma.
+
+ADIMLAR:
+1. Bu oturumun kimliği: $sessionID. Aktiflik kontrolünde KENDİ oturumunu sayma.
+2. Bekleme döngüsü: her 60 saniyede bir aktif oturumları kontrol et:
+   - C:/Users/YILMAZ/.local/state/opencode/service.json içindeki "url" ve "password"
+     değerlerini oku.
+   - GET <url>/api/session/active isteğini Basic auth ile yap
+     (kullanıcı adı: "opencode", parola: okuduğun password).
+   - Yanıttaki "data" içinde kendi oturumun hariç oturum kalmadı VE bu durum en az
+     5 dakika kesintisiz sürdüyse 3. adıma geç; değilse bekle.
+3. Şu komutu BİR KEZ çalıştır:
+   $cmd
+4. Sonucu tek satır raporla ("bilgisayar kapanıyor") ve görevi BİTİR.
+   Kapatma komutunu ikinci kez çalıştırma, bekleme döngüsüne geri dönme.
+
+GÜVENLİK: 12 saat içinde 2. adımdaki koşul sağlanmazsa "zaman aşımı" yaz ve görevi
+kapatma komutu ÇALIŞTIRMADAN sonlandır.
+        """.trimIndent()
     }
 
     // ----------------------------------------------------- agent / model / form
