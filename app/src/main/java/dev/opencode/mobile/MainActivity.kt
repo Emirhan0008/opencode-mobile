@@ -66,6 +66,7 @@ private fun Root(vm: AppViewModel, dark: Boolean) {
     val session by vm.session.collectAsState()
     val agents by vm.agents.collectAsState()
     val models by vm.models.collectAsState()
+    val commands by vm.commands.collectAsState()
     val globalPermissions by vm.globalPermissions.collectAsState()
     val shutdownPlan by vm.shutdownPlan.collectAsState()
     var connectError by remember { mutableStateOf<String?>(null) }
@@ -128,6 +129,8 @@ private fun Root(vm: AppViewModel, dark: Boolean) {
             onCancelForm = vm::cancelForm,
             onRevert = vm::revertToMessage,
             onSwipe = vm::switchRelative,
+            commands = commands,
+            onRunCommand = vm::runCommand,
         )
     }
 }

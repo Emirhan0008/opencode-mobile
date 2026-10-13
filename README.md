@@ -19,6 +19,9 @@ TUI estetiğinde: koyu zemin, monospace yazılar, kutulu paneller.
   model/sağlayıcı hataları mesaj içinde görünür.
 - **Prompt girişi**: mesaj yazın, yanıt canlı aksın; çalışan görevi durdurma düğmesi.
 - **Ajan & model seçimi**: oturum için ajan (build/…) ve model değiştirme.
+- **Komutlar**: oturum ekranındaki "⌨ komutlar" düğmesi OpenCode'daki tüm komutları
+  (`/init`, `/review`, uzantı komutları…) aranabilir listeler; isteğe bağlı bağımsız
+  değişkenle doğrudan oturumda çalıştırır.
 - **Kaydırma ile gezinme**: mesaj akışında sağa/sola kaydırınca önceki/sonraki oturuma geçilir.
 - **Kapatma planı**: ⏻ düğmesiyle "tüm oturumlar (alt ajanlar dahil) bitince bilgisayarı kapat"
   bekçisi kurulur. Aktiflik sıfırlandığında kapatma komutu (`shutdown.exe /s /t 120`, istenirse

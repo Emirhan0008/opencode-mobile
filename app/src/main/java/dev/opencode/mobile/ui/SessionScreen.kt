@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -32,6 +33,7 @@ import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
@@ -90,8 +92,11 @@ fun SessionScreen(
     onCancelForm: (formID: String) -> Unit,
     onRevert: (messageID: String) -> Unit,
     onSwipe: (offset: Int) -> Unit,
+    commands: List<JsonObject>,
+    onRunCommand: (name: String, text: String) -> Unit,
 ) {
     var input by remember { mutableStateOf("") }
+    var showCommands by remember { mutableStateOf(false) }
     val listState = rememberLazyListState()
     // sağa/sola kaydırma ile oturumlar arası geçiş
     var dragX by remember { mutableStateOf(0f) }
@@ -175,6 +180,10 @@ fun SessionScreen(
                     models = models,
                     onPick = onSwitchModel,
                 )
+                Spacer(Modifier.width(6.dp))
+                TextButton(onClick = { showCommands = true }) {
+                    Text("⌨ komutlar", color = Oc.accent, style = MaterialTheme.typography.labelLarge)
+                }
                 Spacer(Modifier.weight(1f))
             }
         }
@@ -234,6 +243,17 @@ fun SessionScreen(
 
         state.error?.let {
             Text("✖ $it", color = Oc.err, modifier = Modifier.padding(horizontal = 12.dp))
+        }
+
+        if (showCommands) {
+            CommandsDialog(
+                commands = commands,
+                onRun = { name, text ->
+                    showCommands = false
+                    onRunCommand(name, text)
+                },
+                onDismiss = { showCommands = false },
+            )
         }
 
         // ------------------------------------------------------------ giriş
@@ -353,6 +373,107 @@ private fun ModelPicker(
             }
         }
     }
+}
+
+// ------------------------------------------------------------ komutlar
+
+/** OpenCode komutlarını (/init, /review, uzantı komutları…) listeler ve çalıştırır. */
+@Composable
+private fun CommandsDialog(
+    commands: List<JsonObject>,
+    onRun: (name: String, text: String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var query by remember { mutableStateOf("") }
+    var picked by remember { mutableStateOf<JsonObject?>(null) }
+    var args by remember { mutableStateOf("") }
+    val visible = commands.filter {
+        query.isBlank() ||
+            it.str("name").orEmpty().contains(query, ignoreCase = true) ||
+            it.str("description").orEmpty().contains(query, ignoreCase = true)
+    }
+
+    // Tek diyalog, iki aşamalı: liste → argüman (pencere değişimi bazı cihazlarda sorun çıkarıyor)
+    AlertDialog(
+        onDismissRequest = {
+            if (picked == null) onDismiss() else picked = null
+        },
+        title = {
+            Text(if (picked == null) "Komutlar" else "/" + (picked?.str("name") ?: "?"))
+        },
+        text = {
+            if (picked == null) {
+                Column(Modifier.heightIn(max = 420.dp)) {
+                    OutlinedTextField(
+                        value = query,
+                        onValueChange = { query = it },
+                        singleLine = true,
+                        placeholder = { Text("ara…") },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Spacer(Modifier.height(6.dp))
+                    LazyColumn(Modifier.fillMaxWidth()) {
+                        items(visible) { c ->
+                            Column(
+                                Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        picked = c
+                                        args = ""
+                                    }
+                                    .padding(vertical = 6.dp),
+                            ) {
+                                Text(
+                                    "/" + (c.str("name") ?: "?"),
+                                    color = Oc.accent,
+                                    style = MaterialTheme.typography.labelLarge,
+                                )
+                                c.str("description")?.let {
+                                    Text(
+                                        it,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = Oc.dim,
+                                        maxLines = 2,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            } else {
+                Column {
+                    picked?.str("description")?.let {
+                        Text(it, style = MaterialTheme.typography.bodySmall, color = Oc.dim)
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = args,
+                        onValueChange = { args = it },
+                        placeholder = { Text("bağımsız değişkenler (isteğe bağlı)") },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            if (picked == null) {
+                TextButton(onClick = onDismiss) { Text("Kapat", color = Oc.dim) }
+            } else {
+                TextButton(onClick = {
+                    val name = picked?.str("name").orEmpty()
+                    val text = args.trim()
+                    picked = null
+                    onRun(name, text)
+                }) { Text("Çalıştır", color = Oc.accent) }
+            }
+        },
+        dismissButton = {
+            if (picked != null) {
+                TextButton(onClick = { picked = null }) { Text("Vazgeç", color = Oc.dim) }
+            }
+        },
+    )
 }
 
 // ------------------------------------------------------------------ cards

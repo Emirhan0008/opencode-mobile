@@ -112,6 +112,9 @@ class AppViewModel(
     private val _models = MutableStateFlow<List<JsonObject>>(emptyList())
     val models: StateFlow<List<JsonObject>> = _models.asStateFlow()
 
+    private val _commands = MutableStateFlow<List<JsonObject>>(emptyList())
+    val commands: StateFlow<List<JsonObject>> = _commands.asStateFlow()
+
     private val _darkTheme = MutableStateFlow(true)
     val darkTheme: StateFlow<Boolean> = _darkTheme.asStateFlow()
 
@@ -149,6 +152,7 @@ class AppViewModel(
         subscribeEvents()
         refreshAgents()
         refreshModels()
+        refreshCommands()
         refreshSessions()
     }
 
@@ -641,6 +645,30 @@ class AppViewModel(
         val current = api ?: return
         viewModelScope.launch {
             runCatching { current.models() }.onSuccess { list -> _models.value = list }
+        }
+    }
+
+    private fun refreshCommands() {
+        val current = api ?: return
+        viewModelScope.launch {
+            runCatching { current.commands() }.onSuccess { list -> _commands.value = list }
+        }
+    }
+
+    /** Komutu (ör. /init, /review) açık oturumda çalıştırır. */
+    fun runCommand(name: String, text: String) {
+        val current = api ?: return
+        val id = currentSessionId() ?: return
+        viewModelScope.launch {
+            _session.update { it.copy(sending = true) }
+            runCatching { current.runCommand(id, name, text) }
+                .onSuccess {
+                    _session.update { it.copy(sending = false) }
+                    refreshMessages()
+                }
+                .onFailure { e ->
+                    _session.update { it.copy(sending = false, error = e.message) }
+                }
         }
     }
 

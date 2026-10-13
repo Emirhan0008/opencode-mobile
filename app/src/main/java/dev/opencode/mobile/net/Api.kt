@@ -119,6 +119,20 @@ class Api(baseUrl: String, private val token: String) {
     suspend fun shell(id: String, command: String): JsonElement =
         post("/api/session/$id/shell", buildJsonObject { put("command", command) })
 
+    /** Kullanılabilir komutlar (/init, /review, uzantı komutları…). */
+    suspend fun commands(): List<JsonObject> =
+        get("/api/command").obj().arr("data").map { it.obj() }
+
+    /** Komutu oturumda çalıştırır. */
+    suspend fun runCommand(id: String, name: String, text: String): JsonElement =
+        post(
+            "/api/session/$id/command",
+            buildJsonObject {
+                put("name", name)
+                put("text", text)
+            },
+        )
+
     suspend fun active(): Set<String> =
         get("/api/session/active").obj().obj("data").keys
 
