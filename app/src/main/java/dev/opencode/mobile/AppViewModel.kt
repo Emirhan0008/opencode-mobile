@@ -666,50 +666,50 @@ class AppViewModel(
                 runCatching {
                     current.prompt(
                         id,
-                        "[İPTAL] Kapatma görevi iptal edildi. Beklemeyi bırak; " +
-                            "shutdown komutunu ÇALIŞTIRMA, görevi hemen sonlandır.",
+                        "[İPTAL] DÜŞÜNME, aynen çalıştır:\n$cancelCmd\n" +
+                            "Sonra \"kapatma görevi iptal edildi\" yaz ve bitir. " +
+                            "shutdown komutunu ÇALIŞTIRMA.",
                     )
                 }
             }
         }
     }
 
+    /** İptal komutu — "kapatma" skill'indeki betik; gözcüyü durdurur, bekleyen kapatmayı iptal eder. */
+    private val cancelCmd =
+        "powershell -NoProfile -ExecutionPolicy Bypass -File " +
+            "\"C:\\Users\\YILMAZ\\.config\\opencode\\skills\\kapatma\\shutdown-watch.ps1\" -Cancel"
+
     /**
-     * Hedef oturuma gönderilecek gözlemci görev metni. Kendi kendine yeterli olmalı:
-     * bekleme, kontrol ve tek seferlik kapatma kurallarının tamamını içerir.
+     * Hedef oturuma gönderilecek gözlemci görev metni. Düşünmeyi kaldıran yapıda:
+     * ajana tek satır komut verir; bekleme/kontrol/katma "kapatma" skill'indeki
+     * betikte ([shutdown-watch.ps1]) yapılır. Kurallar (tek seferlik, döngü yok)
+     * hem skill'de hem burada yazılıdır.
      */
     private fun shutdownTask(sessionID: String, force: Boolean): String {
-        val cmd = if (force) "shutdown.exe /s /f /t 120" else "shutdown.exe /s /t 120"
+        val script = "C:\\Users\\YILMAZ\\.config\\opencode\\skills\\kapatma\\shutdown-watch.ps1"
+        val forceArg = if (force) " -Force" else ""
+        val startCmd = "powershell -NoProfile -ExecutionPolicy Bypass -File \"$script\" -Sid \"$sessionID\"$forceArg"
         return """
-[GÖREV: BİLGİSAYARI KAPAT — TEK SEFERLİK GÖZLEMCİ]
+[GÖREV: BİLGİSAYARI KAPAT — TEK SEFERLİK GÖZLEMCİ] (skill: kapatma)
 
-Amaç: Diğer tüm OpenCode işleri bittikten sonra bu bilgisayarı kapatmak.
+DÜŞÜNME, TARTIŞMA, ARAŞTIRMA YAPMA — bu bir uygulama görevidir, aynen uygula.
+Tüm kurallar "kapatma" skill'inde; özet: betik bekler, kontrol eder ve kapatma
+komutunu BİR KEZ çalıştırır.
 
-KURALLAR (kesinlikle uy):
-1. Bu görev TEK SEFERLİKTİR. Kapatma komutunu EN FAZLA BİR KEZ çalıştır.
-2. ASLA döngüye girme: kapatmayı periyodik tekrarlama, kendini yeniden tetikleme,
-   bu görevi başka zamanlarda kendiliğinden uygulama. (Geçmişte bir oturum bunu
-   sürekli tekrarlayan bir döngüye soktu ve bilgisayar defalarca kendiliğinden kapandı
-   — bu bir HATADIR, tekrarlanmayacak.)
-3. Kapatma yalnızca bu görevle olur; sonradan gelen istekler otonom kapatma tetiklemez.
-4. Telefon veya uygulama kapalı olsa da görevi SÜRDÜR; beklemeyi bırakma.
+ŞİMDİ aynen bu satırı çalıştır:
+$startCmd
 
-ADIMLAR:
-1. Bu oturumun kimliği: $sessionID. Aktiflik kontrolünde KENDİ oturumunu sayma.
-2. Bekleme döngüsü: her 60 saniyede bir aktif oturumları kontrol et:
-   - C:/Users/YILMAZ/.local/state/opencode/service.json içindeki "url" ve "password"
-     değerlerini oku.
-   - GET <url>/api/session/active isteğini Basic auth ile yap
-     (kullanıcı adı: "opencode", parola: okuduğun password).
-   - Yanıttaki "data" içinde kendi oturumun hariç oturum kalmadı VE bu durum en az
-     5 dakika kesintisiz sürdüyse 3. adıma geç; değilse bekle.
-3. Şu komutu BİR KEZ çalıştır:
-   $cmd
-4. Sonucu tek satır raporla ("bilgisayar kapanıyor") ve görevi BİTİR.
-   Kapatma komutunu ikinci kez çalıştırma, bekleme döngüsüne geri dönme.
+Sonra tek satır yaz: "kapatma gözcüsü başlatıldı — tüm işler bitince bilgisayar kapanacak"
+ve GÖREVİ BİTİR. Bekleme döngüsü kurma, kontrol sorgusu çalıştırma, başka işlem yapma.
 
-GÜVENLİK: 12 saat içinde 2. adımdaki koşul sağlanmazsa "zaman aşımı" yaz ve görevi
-kapatma komutu ÇALIŞTIRMADAN sonlandır.
+Kurallar: shutdown.exe'yi kendin ASLA çalıştırma; kendini tekrarlama, döngüye girme.
+(Geçmişte bir oturum bunu sürekli tekrarlayan bir döngüye sokmuştu ve bilgisayar
+defalarca kendiliğinden kapandı — bu bir HATAdır, tekrarlanmayacak.)
+
+"[İPTAL]" mesajı gelirse DÜŞÜNME, aynen çalıştır:
+$cancelCmd
+ve tek satır yaz: "kapatma görevi iptal edildi".
         """.trimIndent()
     }
 

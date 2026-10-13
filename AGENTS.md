@@ -6,30 +6,30 @@ zorunda değildir; burada yazanlar her zaman geçerlidir.
 
 ## Kapatma görevi (shutdown watcher) — ZORUNLU KURALLAR
 
-Kullanıcı "tüm işler bitince bilgisayarı kapat" dediğinde uygulama (veya ajan) bunu
-bir OpenCode oturumuna **gözlemci prompt** olarak gönderir. Görev bilgisayar tarafında
-yürütülür; telefon veya uygulama kapalı olsa da sürer.
+**Her şey global "kapatma" skill'inde:**
+`C:\Users\YILMAZ\.config\opencode\skills\kapatma\` (SKILL.md + shutdown-watch.ps1).
+Görev veya "[İPTAL]" prompt'u gelince **DÜŞÜNME**; skill'de yazan betiği aynen
+çalıştır ve bitir. Bekleme, kontrol ve kapatmanın tamamı betikte — ajan yalnızca
+tek satır komutu çalıştırır, kendisi hiçbir şey yapmaz.
 
-1. **TEK SEFERLİK**: `shutdown.exe` komutu en fazla **BİR KEZ** çalıştırılır. Komut
-   gönderildikten sonra görev biter; bekleme döngüsüne geri dönülmez.
+1. **TEK SEFERLİK**: `shutdown.exe` komutu en fazla **BİR KEZ** çalıştırılır ve o da
+   yalnızca betik tarafından. Komut gönderildikten sonra görev biter.
 2. **ASLA DÖNGÜYE GİRME**: kapatmayı periyodik olarak tekrarlama, kendini yeniden
    tetikleme, bu görevi başka zamanlarda kendiliğinden uygulama.
    **Geçmişte bir oturum bunu sürekli tekrarlayan bir döngüye soktu ve bilgisayar
    defalarca kendiliğinden kapandı — bu bir HATADır, asla tekrarlanmayacak.**
-3. **OTONOM KAPATMA YOK**: kapatma yalnızca kullanıcının açık isteğiyle tetiklenir.
-   İstek gelmeden kapatma görevi kurma veya kapatma komutu çalıştırma.
-4. **TEK SEFERLİK GÖREV TAKİBİ**: bir kapatma görevi zaten açıkken (oturumda görev
-   prompt'u görünürken) ikinci bir görev kurma; önce sor veya eskisini iptal et.
-5. **İPTAL**: kullanıcı iptal ettiğinde bekleme bırakılır, kapatma komutu
-   **çalıştırılmaz** ve görev hemen sonlandırılır.
-6. **ZAMAN AŞIMI**: 12 saat içinde "tüm işler bitti" koşulu sağlanmazsa kapatma
-   komutu çalıştırmadan görevi "zaman aşımı" diyerek bitir.
-7. **KENDİNİ SAYMA**: aktif oturum kontrolünde gözlemci görevi yürüten kendi oturumun
-   sayılmaz; yalnızca diğer oturumların bitmesi beklenir.
+3. **OTONOM KAPATMA YOK**: kapatma yalnızca kullanıcının açık isteğiyle tetiklenir
+   (görev prompt'u veya doğrudan istek). İstek gelmeden kapatma komutu çalıştırma.
+4. **TEK SEFERLİK GÖREV TAKİBİ**: bir kapatma görevi zaten açıkken ikincisini kurma;
+   önce sor veya eskisini iptal et.
+5. **İPTAL**: "[İPTAL]" gelince betiğin `-Cancel` komutunu çalıştır; kapatma komutu
+   asla çalıştırılmaz. (12 saat zaman aşımı ve kendi oturumunu saymama betiğin içindedir.)
+6. **DÜŞÜNMEYİ KALDIR**: bu görevde yorum/tartışma/araştırma yapma — komutu çalıştır,
+   tek satır raporla, bitir.
 
-Görev prompt'unun kanonik metni `AppViewModel.shutdownTask()` içindedir
-(`app/src/main/java/dev/opencode/mobile/AppViewModel.kt`). Metni değiştirirsen
-bu kuralların tamamını koru; özellikle 1, 2 ve 3. maddeleri asla çıkarma.
+Görev prompt'unun kanonik üreticisi `AppViewModel.shutdownTask()` içindedir
+(`app/src/main/java/dev/opencode/mobile/AppViewModel.kt`); metni değiştirirsen
+skill'deki betik yolunu ve bu kuralların tamamını koru.
 
 ## Proje geneli
 
