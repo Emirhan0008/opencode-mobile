@@ -10,10 +10,13 @@ TUI estetiğinde: koyu zemin, monospace yazılar, kutulu paneller.
 - **Bağlantı**: `opencode pair` / `opencode pair --remote` ile verilen bağlantıyı yapıştırın —
   uygulama sunucu adresini ve kodu otomatik ayrıştırır, token'ı alır.
   Aynı Wi-Fi şart değildir; OpenTunnel adresi uzaktan erişim için yeterlidir.
-- **Session listesi**: başlık, dizin, güncelleme zamanı, maliyet, çalışır durum göstergesi;
-  başlık/dizin araması ve *tümü / aktif / son 24s* filtresi.
+- **Session listesi**: başlık, dizin, güncelleme zamanı, maliyet, çalışır durum ve *başarısız*
+  göstergesi; başlık/dizin araması ve *üst düzey / tümü / aktif / son 24s* filtresi.
+  Alt ajan (subagent) oturumları `↳` ile işaretlenir ve varsayılan olarak gizlenir —
+  *tümü* filtresiyle açılır (OpenCode her alt ajan çalıştırması için ayrı oturum kaydı açar).
 - **Mesaj akışı**: kullanıcı/assistant mesajları, katlanabilir "düşünme" (reasoning) blokları,
-  araç (tool) kartları — girdi/çıktı ayrıntısıyla, canlı akış sırasında da.
+  araç (tool) kartları — girdi/çıktı ayrıntısıyla, canlı akış sırasında da;
+  model/sağlayıcı hataları mesaj içinde görünür.
 - **Prompt girişi**: mesaj yazın, yanıt canlı aksın; çalışan görevi durdurma düğmesi.
 - **Ajan & model seçimi**: oturum için ajan (build/…) ve model değiştirme.
 - **Soru kartları**: `question` aracıdan gelen etkileşimli formlar (seçenekli/serbest yanıt)

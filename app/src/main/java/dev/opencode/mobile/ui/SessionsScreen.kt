@@ -53,8 +53,9 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-/** Liste filtresi: tümü / yalnızca çalışanlar / son 24 saat. */
+/** Liste filtresi: üst düzey (varsayılan) / tümü / yalnızca çalışanlar / son 24 saat. */
 enum class SessionFilter(val label: String) {
+    TOP("üst düzey"),
     ALL("tümü"),
     ACTIVE("aktif"),
     RECENT("son 24s"),
@@ -73,7 +74,8 @@ fun SessionsScreen(
 ) {
     var showNew by remember { mutableStateOf(false) }
     var query by remember { mutableStateOf("") }
-    var filter by remember { mutableStateOf(SessionFilter.ALL) }
+    // Alt ajan (subagent) oturumları varsayılan olarak gizli — "tümü" ile açılır.
+    var filter by remember { mutableStateOf(SessionFilter.TOP) }
 
     Scaffold(
         containerColor = Oc.bg,
@@ -167,6 +169,7 @@ fun SessionsScreen(
                     dir.contains(query, ignoreCase = true) ||
                     id.contains(query, ignoreCase = true)
                 val matchesFilter = when (filter) {
+                    SessionFilter.TOP -> s.str("parentID") == null
                     SessionFilter.ALL -> true
                     SessionFilter.ACTIVE -> state.active.contains(id)
                     SessionFilter.RECENT -> {
@@ -206,6 +209,8 @@ fun SessionsScreen(
                             updatedAt = s.obj("time").num("updated") ?: s.obj("time").num("created") ?: 0.0,
                             cost = s.num("cost") ?: 0.0,
                             busy = state.active.contains(s.str("id")),
+                            failed = s.str("outcome") == "failed",
+                            child = s.str("parentID") != null,
                             onClick = { s.str("id")?.let(onOpen) },
                         )
                     }
@@ -251,6 +256,8 @@ private fun SessionRow(
     updatedAt: Double,
     cost: Double,
     busy: Boolean,
+    failed: Boolean,
+    child: Boolean,
     onClick: () -> Unit,
 ) {
     Row(
@@ -258,7 +265,11 @@ private fun SessionRow(
             .fillMaxWidth()
             .clip(RoundedCornerShape(4.dp))
             .background(Oc.panel)
-            .border(1.dp, if (busy) Oc.accent else Oc.border, RoundedCornerShape(4.dp))
+            .border(1.dp, when {
+                busy -> Oc.accent
+                failed -> Oc.err
+                else -> Oc.border
+            }, RoundedCornerShape(4.dp))
             .clickable(onClick = onClick)
             .padding(10.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -267,11 +278,20 @@ private fun SessionRow(
             Modifier
                 .size(8.dp)
                 .clip(CircleShape)
-                .background(if (busy) Oc.accent else Oc.dim),
+                .background(when {
+                    busy -> Oc.accent
+                    failed -> Oc.err
+                    else -> Oc.dim
+                }),
         )
         Spacer(Modifier.width(10.dp))
         Column(Modifier.weight(1f)) {
-            Text(title, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodyLarge)
+            Text(
+                (if (child) "↳ " else "") + title,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                style = MaterialTheme.typography.bodyLarge,
+            )
             Text(
                 "$directory  ·  ${formatTime(updatedAt)}  ·  $${"%.3f".format(cost)}",
                 style = MaterialTheme.typography.bodySmall,
@@ -279,7 +299,20 @@ private fun SessionRow(
                 overflow = TextOverflow.Ellipsis,
             )
         }
-        Text(if (busy) "çalışıyor" else "", color = Oc.accent, style = MaterialTheme.typography.labelSmall)
+        Text(
+            when {
+                busy -> "çalışıyor"
+                failed -> "başarısız"
+                child -> "alt ajan"
+                else -> ""
+            },
+            color = when {
+                busy -> Oc.accent
+                failed -> Oc.err
+                else -> Oc.purple
+            },
+            style = MaterialTheme.typography.labelSmall,
+        )
     }
 }
 

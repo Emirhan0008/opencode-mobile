@@ -359,7 +359,7 @@ class AppViewModel(
             _session.update { it.copy(busy = false) }
             viewModelScope.launch { refreshMessages() }
         }
-        if (wasBusy && !AppVisibility.visible && sid != null) {
+        if (wasBusy && !AppVisibility.visible) {
             val title = _sessions.value.sessions.firstOrNull { it.str("id") == sid }?.str("title")
                 ?.ifBlank { null } ?: "oturum"
             notify(sid.hashCode(), "Görev tamamlandı", title)

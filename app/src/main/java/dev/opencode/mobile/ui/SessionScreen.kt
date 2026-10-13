@@ -24,9 +24,9 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
-import androidx.compose.material.icons.filled.Send
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -126,13 +126,16 @@ fun SessionScreen(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
-                Text(
-                    "${state.session?.str("agent") ?: "?"}  ·  ${model?.str("providerID") ?: "?"}/${model?.str("id") ?: "?"}",
-                    color = Oc.blue,
-                    style = MaterialTheme.typography.labelSmall,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
+                val agent = state.session?.str("agent")
+                if (agent != null || model?.str("id") != null) {
+                    Text(
+                        "${agent ?: "?"}  ·  ${model?.str("providerID") ?: "?"}/${model?.str("id") ?: "?"}",
+                        color = Oc.blue,
+                        style = MaterialTheme.typography.labelSmall,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
             }
             AgentPicker(
                 current = state.session?.str("agent"),
@@ -214,7 +217,7 @@ fun SessionScreen(
                 },
                 enabled = !state.sending && input.isNotBlank(),
             ) {
-                Icon(Icons.Default.Send, contentDescription = "gönder", tint = Oc.accent)
+                Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "gönder", tint = Oc.accent)
             }
         }
     }
@@ -328,6 +331,16 @@ private fun MessageCard(msg: JsonObject, liveID: String?) {
                         "reasoning" -> ReasoningBlock(part.str("text").orEmpty())
                         "tool" -> ToolBlock(part)
                     }
+                }
+                // model/sağlayıcı hatası: içerik boş kalmışsa da hata görünür olsun
+                val err = msg.obj("error").str("message")
+                if (err != null || msg.str("finish") == "error") {
+                    Text(
+                        "✖ " + (err ?: "yanıt üretilemedi"),
+                        color = Oc.err,
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.padding(top = 4.dp),
+                    )
                 }
             }
         }
