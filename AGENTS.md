@@ -23,7 +23,9 @@ tek satır komutu çalıştırır, kendisi hiçbir şey yapmaz.
 4. **TEK SEFERLİK GÖREV TAKİBİ**: bir kapatma görevi zaten açıkken ikincisini kurma;
    önce sor veya eskisini iptal et.
 5. **İPTAL**: "[İPTAL]" gelince betiğin `-Cancel` komutunu çalıştır; kapatma komutu
-   asla çalıştırılmaz. (12 saat zaman aşımı ve kendi oturumunu saymama betiğin içindedir.)
+   asla çalıştırılmaz. (12 saat zaman aşımı betiğin içindedir; kapatma için aktif
+   olan **her** oturumun bitmesi gerekir — kendi oturumu ayırmak gerekmez, görev
+   prompt'u olduğu gibi başka oturuma yapıştırılabilir.)
 6. **DÜŞÜNMEYİ KALDIR**: bu görevde yorum/tartışma/araştırma yapma — komutu çalıştır,
    tek satır raporla, bitir.
 
