@@ -86,6 +86,8 @@ fun SessionsScreen(
     permissionCount: Int,
     darkTheme: Boolean,
     onToggleTheme: () -> Unit,
+    /** Üst bardaki ⚙ — ayarlar ekranını açar. */
+    onOpenSettings: () -> Unit = {},
     onRefresh: () -> Unit,
     onOpen: (String) -> Unit,
     onNew: (title: String, directory: String) -> Unit,
@@ -152,6 +154,9 @@ fun SessionsScreen(
                     if (permissionCount > 0) {
                         Text("🔐 $permissionCount", color = Oc.warn, style = MaterialTheme.typography.labelLarge)
                         Spacer(Modifier.width(8.dp))
+                    }
+                    IconButton(onClick = onOpenSettings) {
+                        Text("⚙", style = MaterialTheme.typography.labelLarge)
                     }
                     IconButton(onClick = onToggleTheme) {
                         Text(if (darkTheme) "☀" else "☾", style = MaterialTheme.typography.labelLarge)

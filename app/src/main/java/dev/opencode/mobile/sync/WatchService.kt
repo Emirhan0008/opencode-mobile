@@ -53,6 +53,11 @@ class WatchService : Service() {
     private var apiToken: String? = null
     private var sseAttempt = 0
 
+    // Bildirim tercihleri (Settings akışlarından canlı okunur). Varsayılan: açık.
+    @Volatile private var notifyPermissions = true
+    @Volatile private var notifyForms = true
+    @Volatile private var notifyWork = true
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
@@ -62,6 +67,7 @@ class WatchService : Service() {
         val notification = Notifier.ongoing(this, FOREGROUND_ID, TITLE, "OpenCode — başlatılıyor…")
         startForegroundCompat(notification)
         observeConnection()
+        observeSettings()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -101,6 +107,14 @@ class WatchService : Service() {
     }
 
     // ------------------------------------------------------------- bağlantı
+
+    /** Bildirim tercihlerini [Settings] akışlarından izler (VM'den bağımsız). */
+    private fun observeSettings() {
+        val settings = Settings(applicationContext)
+        scope.launch { settings.notifyPermissions.collect { notifyPermissions = it } }
+        scope.launch { settings.notifyForms.collect { notifyForms = it } }
+        scope.launch { settings.notifyWork.collect { notifyWork = it } }
+    }
 
     /** Bağlantıyı [Settings.connection] akışından izler (VM'den bağımsız). */
     private fun observeConnection() {
@@ -178,15 +192,16 @@ class WatchService : Service() {
         val sid = d.str("sessionID")
         when (ev.type) {
             // Öndeyken uygulama içi arayüz zaten gösterir — bildirim atma.
-            "permission.asked" -> if (!AppVisibility.visible) notifyPermission(d, sid)
+            // Ayrıca ilgili tercih kapalıysa hiç bildirme.
+            "permission.asked" -> if (notifyPermissions && !AppVisibility.visible) notifyPermission(d, sid)
             // Yanıtlanınca (uygulama içinden olsa bile) bekleyen bildirimi iptal et.
             "permission.replied" -> {
                 val rid = d.str("requestID") ?: d.str("id")
                 if (rid != null) runCatching { Notifier.cancel(this, rid.hashCode()) }
             }
-            "form.created" -> if (!AppVisibility.visible) notifyForm(d, sid)
-            "session.idle" -> if (!AppVisibility.visible) notifyFinished(sid, ok = true)
-            "session.execution.failed" -> if (!AppVisibility.visible) notifyFinished(sid, ok = false)
+            "form.created" -> if (notifyForms && !AppVisibility.visible) notifyForm(d, sid)
+            "session.idle" -> if (notifyWork && !AppVisibility.visible) notifyFinished(sid, ok = true)
+            "session.execution.failed" -> if (notifyWork && !AppVisibility.visible) notifyFinished(sid, ok = false)
             // session.execution.started: BİLDİRME (gürültü).
             else -> Unit
         }

@@ -114,6 +114,7 @@ sealed interface ConnState {
 sealed interface Screen {
     data object Connect : Screen
     data object Sessions : Screen
+    data object Settings : Screen
     data class Session(val id: String) : Screen
 }
 
@@ -187,6 +188,22 @@ class AppViewModel(
     private val _darkTheme = MutableStateFlow(true)
     val darkTheme: StateFlow<Boolean> = _darkTheme.asStateFlow()
 
+    /** Arka plan bağlantı servisi (ana anahtar) — kapalıyken servis çalışmaz. */
+    private val _backgroundService = MutableStateFlow(true)
+    val backgroundService: StateFlow<Boolean> = _backgroundService.asStateFlow()
+
+    /** İzin isteği bildirimleri açık mı. */
+    private val _notifyPermissions = MutableStateFlow(true)
+    val notifyPermissions: StateFlow<Boolean> = _notifyPermissions.asStateFlow()
+
+    /** Soru (form) bildirimleri açık mı. */
+    private val _notifyForms = MutableStateFlow(true)
+    val notifyForms: StateFlow<Boolean> = _notifyForms.asStateFlow()
+
+    /** Görev bitişi bildirimleri açık mı. */
+    private val _notifyWork = MutableStateFlow(true)
+    val notifyWork: StateFlow<Boolean> = _notifyWork.asStateFlow()
+
     /**
      * Gönderilmiş kapatma görevi:
      * yeni biçim `"<force|soft>|<oturumID>|<HH:MM veya ->|<armedAtEpochMs>"`,
@@ -235,6 +252,18 @@ class AppViewModel(
             settings.darkTheme.collect { _darkTheme.value = it }
         }
         viewModelScope.launch {
+            settings.backgroundService.collect { _backgroundService.value = it }
+        }
+        viewModelScope.launch {
+            settings.notifyPermissions.collect { _notifyPermissions.value = it }
+        }
+        viewModelScope.launch {
+            settings.notifyForms.collect { _notifyForms.value = it }
+        }
+        viewModelScope.launch {
+            settings.notifyWork.collect { _notifyWork.value = it }
+        }
+        viewModelScope.launch {
             settings.shutdownPlan.collect { plan ->
                 _shutdownPlan.value = plan
                 // Depodan gelen plan (uygulama açılışı) için gözcü canlılığını sorgula —
@@ -270,7 +299,8 @@ class AppViewModel(
         if (_shutdownPlan.value != null) refreshShutdownStatus()
         // Bildirimlerin tek kaynağı: SSE'yi arka planda açık tutan ön plan servisi.
         // Servis Settings'i kendisi okur; burada yalnız başlatırız.
-        WatchService.start(appContext)
+        // Ana anahtar (backgroundService) kapalıysa servis hiç başlatılmaz.
+        if (_backgroundService.value) WatchService.start(appContext)
     }
 
     /** Pairing kodu / URL'i ile bağlanır ve profili kaydeder. */
@@ -356,6 +386,45 @@ class AppViewModel(
     fun setDarkTheme(dark: Boolean) {
         _darkTheme.value = dark
         viewModelScope.launch { settings.setDarkTheme(dark) }
+    }
+
+    /**
+     * Arka plan bağlantı servisini açar/kapatır (ana anahtar). Kapatınca servis
+     * durur (arka plan bildirimi de durur); açınca bağlantı varsa hemen başlatılır.
+     */
+    fun setBackgroundService(enabled: Boolean) {
+        _backgroundService.value = enabled
+        viewModelScope.launch { settings.setBackgroundService(enabled) }
+        if (enabled) {
+            if (_connected.value) WatchService.start(appContext)
+        } else {
+            WatchService.stop(appContext)
+        }
+    }
+
+    fun setNotifyPermissions(enabled: Boolean) {
+        _notifyPermissions.value = enabled
+        viewModelScope.launch { settings.setNotifyPermissions(enabled) }
+    }
+
+    fun setNotifyForms(enabled: Boolean) {
+        _notifyForms.value = enabled
+        viewModelScope.launch { settings.setNotifyForms(enabled) }
+    }
+
+    fun setNotifyWork(enabled: Boolean) {
+        _notifyWork.value = enabled
+        viewModelScope.launch { settings.setNotifyWork(enabled) }
+    }
+
+    /** Ayarlar ekranını açar. */
+    fun openSettings() {
+        _screen.value = Screen.Settings
+    }
+
+    /** Ayarlar ekranından oturumlar listesine döner. */
+    fun closeSettings() {
+        _screen.value = Screen.Sessions
     }
 
     // ----------------------------------------------------------------- SSE

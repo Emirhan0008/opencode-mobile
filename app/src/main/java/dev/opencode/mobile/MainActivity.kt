@@ -22,6 +22,7 @@ import dev.opencode.mobile.ui.ConnectScreen
 import dev.opencode.mobile.ui.OpenCodeTheme
 import dev.opencode.mobile.ui.SessionScreen
 import dev.opencode.mobile.ui.SessionsScreen
+import dev.opencode.mobile.ui.SettingsScreen
 import dev.opencode.mobile.notify.Notifier
 
 class MainActivity : ComponentActivity() {
@@ -92,6 +93,10 @@ private fun Root(
     val activeProfileId by vm.activeProfileId.collectAsState()
     val connState by vm.connState.collectAsState()
     val pendingActions by vm.pendingActions.collectAsState()
+    val backgroundService by vm.backgroundService.collectAsState()
+    val notifyPermissions by vm.notifyPermissions.collectAsState()
+    val notifyForms by vm.notifyForms.collectAsState()
+    val notifyWork by vm.notifyWork.collectAsState()
     var connectError by remember { mutableStateOf<String?>(null) }
     var connecting by remember { mutableStateOf(false) }
 
@@ -154,6 +159,21 @@ private fun Root(
             pendingActions = pendingActions,
             onRemoveQueued = vm::removeFromQueue,
             onFlushQueue = vm::flushQueue,
+            onOpenSettings = vm::openSettings,
+        )
+
+        Screen.Settings -> SettingsScreen(
+            backgroundService = backgroundService,
+            notifyPermissions = notifyPermissions,
+            notifyForms = notifyForms,
+            notifyWork = notifyWork,
+            darkTheme = dark,
+            onToggleBackground = vm::setBackgroundService,
+            onTogglePermissions = vm::setNotifyPermissions,
+            onToggleForms = vm::setNotifyForms,
+            onToggleWork = vm::setNotifyWork,
+            onToggleTheme = { vm.setDarkTheme(!dark) },
+            onBack = vm::closeSettings,
         )
 
         is Screen.Session -> SessionScreen(

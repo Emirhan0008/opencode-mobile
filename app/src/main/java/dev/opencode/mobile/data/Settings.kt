@@ -33,6 +33,10 @@ class Settings(private val context: Context) {
     private val keyToken = stringPreferencesKey("token")
     private val keyDarkTheme = booleanPreferencesKey("dark_theme")
     private val keyShutdownPlan = stringPreferencesKey("shutdown_plan")
+    private val keyBackgroundService = booleanPreferencesKey("background_service")
+    private val keyNotifyPermissions = booleanPreferencesKey("notify_permissions")
+    private val keyNotifyForms = booleanPreferencesKey("notify_forms")
+    private val keyNotifyWork = booleanPreferencesKey("notify_work")
     private val keyProfiles = stringPreferencesKey("profiles")
     private val keyActiveProfile = stringPreferencesKey("active_profile")
     private val keyQueue = stringPreferencesKey("queue")
@@ -83,6 +87,22 @@ class Settings(private val context: Context) {
 
     /** true = koyu tema, false = açık tema. */
     val darkTheme: Flow<Boolean> = context.dataStore.data.map { prefs -> prefs[keyDarkTheme] ?: true }
+
+    /** Arka plan bağlantı servisi (ana anahtar). false ise servis hiç çalışmaz, arka plan bildirimi olmaz. */
+    val backgroundService: Flow<Boolean> =
+        context.dataStore.data.map { prefs -> prefs[keyBackgroundService] ?: true }
+
+    /** İzin isteği bildirimleri. */
+    val notifyPermissions: Flow<Boolean> =
+        context.dataStore.data.map { prefs -> prefs[keyNotifyPermissions] ?: true }
+
+    /** Soru (form) bekliyor bildirimleri. */
+    val notifyForms: Flow<Boolean> =
+        context.dataStore.data.map { prefs -> prefs[keyNotifyForms] ?: true }
+
+    /** Görev tamamlandı/başarısız bildirimleri. */
+    val notifyWork: Flow<Boolean> =
+        context.dataStore.data.map { prefs -> prefs[keyNotifyWork] ?: true }
 
     /** Çevrimdışı kuyruk (JSON listesi) — biçimini AppViewModel belirler. */
     val queue: Flow<String?> = context.dataStore.data.map { prefs -> prefs[keyQueue] }
@@ -150,6 +170,22 @@ class Settings(private val context: Context) {
 
     suspend fun setDarkTheme(dark: Boolean) {
         context.dataStore.edit { prefs -> prefs[keyDarkTheme] = dark }
+    }
+
+    suspend fun setBackgroundService(enabled: Boolean) {
+        context.dataStore.edit { prefs -> prefs[keyBackgroundService] = enabled }
+    }
+
+    suspend fun setNotifyPermissions(enabled: Boolean) {
+        context.dataStore.edit { prefs -> prefs[keyNotifyPermissions] = enabled }
+    }
+
+    suspend fun setNotifyForms(enabled: Boolean) {
+        context.dataStore.edit { prefs -> prefs[keyNotifyForms] = enabled }
+    }
+
+    suspend fun setNotifyWork(enabled: Boolean) {
+        context.dataStore.edit { prefs -> prefs[keyNotifyWork] = enabled }
     }
 
     suspend fun setShutdownPlan(plan: String?) {
