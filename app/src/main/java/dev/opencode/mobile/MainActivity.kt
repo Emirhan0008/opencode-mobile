@@ -1,12 +1,14 @@
 package dev.opencode.mobile
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -20,19 +22,30 @@ import dev.opencode.mobile.ui.ConnectScreen
 import dev.opencode.mobile.ui.OpenCodeTheme
 import dev.opencode.mobile.ui.SessionScreen
 import dev.opencode.mobile.ui.SessionsScreen
+import dev.opencode.mobile.notify.Notifier
 
 class MainActivity : ComponentActivity() {
+
+    /** Bildirimden gelen oturum kimliği — açıldıktan sonra tüketilir. */
+    private var pendingSessionId by mutableStateOf<String?>(null)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         requestNotificationPermission()
+        pendingSessionId = intent?.getStringExtra(Notifier.EXTRA_SESSION_ID)
         setContent {
             val vm: AppViewModel = viewModel(factory = AppViewModel.Factory(LocalContext.current))
             val dark by vm.darkTheme.collectAsState()
             OpenCodeTheme(dark = dark) {
-                Root(vm, dark)
+                Root(vm, dark, pendingSessionId) { pendingSessionId = null }
             }
         }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        pendingSessionId = intent.getStringExtra(Notifier.EXTRA_SESSION_ID)
     }
 
     override fun onStart() {
@@ -60,7 +73,12 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-private fun Root(vm: AppViewModel, dark: Boolean) {
+private fun Root(
+    vm: AppViewModel,
+    dark: Boolean,
+    openSessionId: String?,
+    onOpenSessionConsumed: () -> Unit,
+) {
     val screen by vm.screen.collectAsState()
     val sessions by vm.sessions.collectAsState()
     val session by vm.session.collectAsState()
@@ -76,6 +94,14 @@ private fun Root(vm: AppViewModel, dark: Boolean) {
     val pendingActions by vm.pendingActions.collectAsState()
     var connectError by remember { mutableStateOf<String?>(null) }
     var connecting by remember { mutableStateOf(false) }
+
+    // Bildirimden gelen oturum isteği (kolaylık) — varsa aç ve tüket.
+    LaunchedEffect(openSessionId) {
+        if (openSessionId != null) {
+            vm.openSession(openSessionId)
+            onOpenSessionConsumed()
+        }
+    }
 
     when (val s = screen) {
         Screen.Connect -> ConnectScreen(

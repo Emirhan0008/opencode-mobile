@@ -18,6 +18,7 @@ import dev.opencode.mobile.net.obj
 import dev.opencode.mobile.net.str
 import dev.opencode.mobile.net.text
 import dev.opencode.mobile.notify.Notifier
+import dev.opencode.mobile.sync.WatchService
 import java.io.IOException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -267,6 +268,9 @@ class AppViewModel(
         flushQueue()
         // Plan varsa gözcü canlılığını başlangıçta bir kez sorgula (bayat banner temizliği için).
         if (_shutdownPlan.value != null) refreshShutdownStatus()
+        // Bildirimlerin tek kaynağı: SSE'yi arka planda açık tutan ön plan servisi.
+        // Servis Settings'i kendisi okur; burada yalnız başlatırız.
+        WatchService.start(appContext)
     }
 
     /** Pairing kodu / URL'i ile bağlanır ve profili kaydeder. */
@@ -337,6 +341,8 @@ class AppViewModel(
             reconnectJob?.cancel()
             reconnectJob = null
             cancelShutdown()
+            // Ön plan servisini durdur — bağlantı istemci tarafından kesiliyor.
+            WatchService.stop(appContext)
             settings.clearConnection()
             api = null
             apiBaseUrl = null
@@ -501,11 +507,7 @@ class AppViewModel(
                 if (sid == currentSessionId()) {
                     _session.update { it.copy(permissions = it.permissions + req) }
                 }
-                if (!AppVisibility.visible) {
-                    val action = req.str("action") ?: "izin"
-                    val res = req.arr("resources").mapNotNull { it.text() }.take(3)
-                    notify(req.str("id").hashCode(), "İzin isteği", (listOf(action) + res).joinToString("\n"))
-                }
+                // Bildirim artık WatchService tarafından atılır (çift bildirim olmasın).
             }
 
             "permission.replied" -> {
@@ -522,9 +524,7 @@ class AppViewModel(
                         st.copy(forms = st.forms.filterNot { it.str("id") == fid } + form)
                     }
                 }
-                if (!AppVisibility.visible) {
-                    notify(fid.hashCode(), "Soru bekliyor", form.str("title") ?: "Bir soru yanıtı bekliyor")
-                }
+                // Bildirim artık WatchService tarafından atılır (çift bildirim olmasın).
             }
 
             "form.replied", "form.cancelled" -> {
