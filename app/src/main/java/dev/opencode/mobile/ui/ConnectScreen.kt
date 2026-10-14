@@ -1,6 +1,9 @@
 package dev.opencode.mobile.ui
 
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -12,10 +15,12 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -28,20 +33,28 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import dev.opencode.mobile.R
+import dev.opencode.mobile.data.Profile
 
 /**
  * Bağlantı ekranı. En kolay yol: PC'de `opencode pair` (veya `opencode pair --remote`)
  * ile çıkan bağlantıyı doğrudan yapıştırmak. Sunucu adresi ve kod otomatik ayrıştırılır.
+ * Kayıtlı profiller en üstte seçilebilir/silinebilir.
  */
 @Composable
 fun ConnectScreen(
     connecting: Boolean,
     error: String?,
+    profiles: List<Profile> = emptyList(),
+    activeProfileId: String? = null,
+    onSelectProfile: (String) -> Unit = {},
+    onDeleteProfile: (String) -> Unit = {},
     onConnectCode: (baseUrl: String, codeOrUrl: String) -> Unit,
     onConnectPassword: (baseUrl: String, password: String) -> Unit,
 ) {
@@ -59,6 +72,51 @@ fun ConnectScreen(
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
+        // ------------------------------------------------------ kayıtlı profiller
+        if (profiles.isNotEmpty()) {
+            Text(
+                "KAYITLI PROFİLLER",
+                style = MaterialTheme.typography.labelMedium,
+                color = Oc.dim,
+            )
+            profiles.forEach { p ->
+                val active = p.id == activeProfileId
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(if (active) Oc.panelAlt else Oc.panel)
+                        .border(1.dp, if (active) Oc.accent else Oc.border, RoundedCornerShape(4.dp))
+                        .clickable { onSelectProfile(p.id) }
+                        .padding(start = 10.dp, end = 2.dp, top = 6.dp, bottom = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(if (active) "✓" else "·", color = if (active) Oc.accent else Oc.dim)
+                    Spacer(Modifier.width(8.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            p.name,
+                            style = MaterialTheme.typography.bodyLarge,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        Text(
+                            p.baseUrl,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Oc.dim,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                    IconButton(onClick = { onDeleteProfile(p.id) }) {
+                        Text("✖", color = Oc.err)
+                    }
+                }
+            }
+            HorizontalDivider(color = Oc.border)
+        }
+
+        // -------------------------------------------------------- yeni bağlantı
         Row(verticalAlignment = Alignment.CenterVertically) {
             Image(
                 painter = painterResource(R.drawable.ic_logo),
@@ -68,6 +126,11 @@ fun ConnectScreen(
             Spacer(Modifier.width(10.dp))
             Text("┌─ OpenCode Mobile ─────────────", style = MaterialTheme.typography.bodyMedium)
         }
+        Text(
+            "YENİ BAĞLANTI",
+            style = MaterialTheme.typography.labelMedium,
+            color = Oc.dim,
+        )
         Text(
             "PC'nizde `opencode pair --remote` çalıştırın, çıkan bağlantıyı buraya yapıştırın.",
             style = MaterialTheme.typography.bodySmall,

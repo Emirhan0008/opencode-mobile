@@ -58,6 +58,8 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import dev.opencode.mobile.ConnState
+import dev.opencode.mobile.QueuedAction
 import dev.opencode.mobile.R
 import dev.opencode.mobile.SessionsState
 import dev.opencode.mobile.WatchStatus
@@ -99,12 +101,30 @@ fun SessionsScreen(
     /** Gözcünün son canlılık durumu (bilinmiyorsa null). */
     watchStatus: WatchStatus? = null,
     onRefreshWatch: () -> Unit = {},
+    /** Bağlantı durumu — Connected ise durum satırı gösterilmez. */
+    connState: ConnState = ConnState.Connected,
+    onReconnect: () -> Unit = {},
+    /** Çevrimdışı kuyruk (boşsa kart gösterilmez). */
+    pendingActions: List<QueuedAction> = emptyList(),
+    onRemoveQueued: (String) -> Unit = {},
+    onFlushQueue: () -> Unit = {},
 ) {
     var showNew by remember { mutableStateOf(false) }
     var showShutdown by remember { mutableStateOf(false) }
     var query by remember { mutableStateOf("") }
     // Alt ajan (subagent) oturumları varsayılan olarak gizli — "tümü" ile açılır.
     var filter by remember { mutableStateOf(SessionFilter.TOP) }
+
+    // Çevrimdışıyken geçen süreyi canlı göstermek için saniyelik tik.
+    var nowTick by remember { mutableStateOf(System.currentTimeMillis()) }
+    if (connState is ConnState.Offline) {
+        LaunchedEffect(connState) {
+            while (true) {
+                delay(1000)
+                nowTick = System.currentTimeMillis()
+            }
+        }
+    }
 
     Scaffold(
         containerColor = Oc.bg,
@@ -149,6 +169,48 @@ fun SessionsScreen(
                     TextButton(onClick = onDisconnect) { Text("çıkış", color = Oc.dim) }
                 }
 
+                // ------------------------------------------------ bağlantı durumu
+                // Connected ise hiçbir şey gösterilmez; satıra dokununca yeniden bağlanılır.
+                when (connState) {
+                    is ConnState.Connected -> Unit
+                    is ConnState.Connecting -> Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(Oc.panelAlt)
+                            .clickable(onClick = onReconnect)
+                            .padding(horizontal = 12.dp, vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            "↺ Bağlanıyor… (${connState.attempt}. deneme" +
+                                if (connState.nextRetrySeconds > 0) " · ${connState.nextRetrySeconds} sn sonra)" else ")",
+                            color = Oc.warn,
+                            style = MaterialTheme.typography.labelSmall,
+                        )
+                    }
+                    is ConnState.Offline -> {
+                        val elapsed = if (connState.sinceMillis > 0) {
+                            formatElapsed((nowTick - connState.sinceMillis) / 1000)
+                        } else {
+                            null
+                        }
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .background(Oc.err.copy(alpha = 0.12f))
+                                .clickable(onClick = onReconnect)
+                                .padding(horizontal = 12.dp, vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                "✕ Çevrimdışı (bağlantı yok)" + if (elapsed != null) " · $elapsed" else "",
+                                color = Oc.err,
+                                style = MaterialTheme.typography.labelSmall,
+                            )
+                        }
+                    }
+                }
+
                 // kapatma görevi bandı
                 if (shutdownArmed) {
                     val atLabel = shutdownAt?.takeIf { it.isNotBlank() && it != "-" }
@@ -170,6 +232,51 @@ fun SessionsScreen(
                             modifier = Modifier.weight(1f),
                         )
                         TextButton(onClick = onCancelShutdown) { Text("iptal", color = Oc.err) }
+                    }
+                }
+
+                // ------------------------------------------- çevrimdışı kuyruk
+                if (pendingActions.isNotEmpty()) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(Oc.panelAlt)
+                            .border(1.dp, Oc.border)
+                            .padding(horizontal = 12.dp, vertical = 6.dp),
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                "KUYRUKTA ${pendingActions.size} EYLEM BEKLİYOR",
+                                color = Oc.warn,
+                                style = MaterialTheme.typography.labelSmall,
+                                modifier = Modifier.weight(1f),
+                            )
+                            TextButton(onClick = onFlushQueue) { Text("Şimdi gönder", color = Oc.accent) }
+                        }
+                        pendingActions.forEach { a ->
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Column(Modifier.weight(1f)) {
+                                    Text(
+                                        a.label,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                    a.lastError?.let { err ->
+                                        Text(
+                                            "✖ $err",
+                                            color = Oc.err,
+                                            style = MaterialTheme.typography.labelSmall,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                        )
+                                    }
+                                }
+                                IconButton(onClick = { onRemoveQueued(a.id) }) {
+                                    Text("✖", color = Oc.err)
+                                }
+                            }
+                        }
                     }
                 }
 
@@ -779,4 +886,14 @@ fun formatTime(epochMs: Double): String {
     if (epochMs <= 0) return "-"
     val sdf = SimpleDateFormat("dd.MM HH:mm", Locale.getDefault())
     return sdf.format(Date(epochMs.toLong()))
+}
+
+/** Geçen süreyi kısa Türkçe metne çevirir (ör. "12 sn", "3 dk", "2 sa"). */
+fun formatElapsed(seconds: Long): String {
+    if (seconds < 60) return "$seconds sn"
+    val minutes = seconds / 60
+    if (minutes < 60) return "$minutes dk"
+    val hours = minutes / 60
+    if (hours < 24) return "$hours sa"
+    return "${hours / 24} gün"
 }

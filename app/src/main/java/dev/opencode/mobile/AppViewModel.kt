@@ -7,8 +7,10 @@ import androidx.compose.runtime.setValue
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import dev.opencode.mobile.data.Profile
 import dev.opencode.mobile.data.Settings
 import dev.opencode.mobile.net.Api
+import dev.opencode.mobile.net.ApiException
 import dev.opencode.mobile.net.OcEvent
 import dev.opencode.mobile.net.arr
 import dev.opencode.mobile.net.num
@@ -16,11 +18,18 @@ import dev.opencode.mobile.net.obj
 import dev.opencode.mobile.net.str
 import dev.opencode.mobile.net.text
 import dev.opencode.mobile.notify.Notifier
+import java.io.IOException
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.builtins.ListSerializer
+import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
@@ -78,6 +87,29 @@ data class WatchStatus(
     val shutdownSent: Boolean,
 )
 
+/** Çevrimdışıyken yapılan, bağlantı gelince sırayla gönderilecek eylem. */
+@Serializable
+data class QueuedAction(
+    val id: String,
+    val kind: String,
+    val sessionID: String?,
+    val label: String,
+    val payload: String,
+    val lastError: String? = null,
+)
+
+/** Bağlantı durumu yüzeyi — UI'a metin üretmek için. */
+sealed interface ConnState {
+    /** SSE akışı açık. */
+    data object Connected : ConnState
+
+    /** Kopukluk sonrası yeniden bağlanma bekleniyor. */
+    data class Connecting(val attempt: Int, val nextRetrySeconds: Int) : ConnState
+
+    /** Bağlantı yok / kurulmadı. */
+    data class Offline(val sinceMillis: Long) : ConnState
+}
+
 sealed interface Screen {
     data object Connect : Screen
     data object Sessions : Screen
@@ -99,8 +131,33 @@ class AppViewModel(
     private var api: Api? = null
     private var sseCall: Call? = null
 
+    /** api ile eşleşen bağlantı bilgileri — profil değişiminde yeniden kurulum tespiti için. */
+    private var apiBaseUrl: String? = null
+    private var apiToken: String? = null
+
+    /** SSE yeniden bağlanma denemesi ve bekleyen yeniden-abone işi. */
+    private var sseAttempt = 0
+    private var reconnectJob: Job? = null
+
     private val _screen = MutableStateFlow<Screen>(Screen.Sessions)
     val screen: StateFlow<Screen> = _screen.asStateFlow()
+
+    /** Kayıtlı profiller ve aktif profil (UI bağlaması için). */
+    private val _profiles = MutableStateFlow<List<Profile>>(emptyList())
+    val profiles: StateFlow<List<Profile>> = _profiles.asStateFlow()
+
+    private val _activeProfileId = MutableStateFlow<String?>(null)
+    val activeProfileId: StateFlow<String?> = _activeProfileId.asStateFlow()
+
+    /** Bağlantı durumu (UI'da ince durum satırı). */
+    private val _connState = MutableStateFlow<ConnState>(ConnState.Offline(0L))
+    val connState: StateFlow<ConnState> = _connState.asStateFlow()
+
+    /** Bağlantı yokken yapılan, bağlantı gelince gönderilecek eylemler. */
+    private val _pendingActions = MutableStateFlow<List<QueuedAction>>(emptyList())
+    val pendingActions: StateFlow<List<QueuedAction>> = _pendingActions.asStateFlow()
+
+    private val queueJson = Json { ignoreUnknownKeys = true }
 
     /** Kendi yürütmeleri süren oturumlar (UI'da gösterilen set buna üst oturumlar eklenerek hesaplanır). */
     private var rawActive: Set<String> = emptySet()
@@ -147,11 +204,30 @@ class AppViewModel(
                 if (conn == null) {
                     _connected.value = false
                     api = null
+                    apiBaseUrl = null
+                    apiToken = null
+                    sseAttempt = 0
+                    _connState.value = ConnState.Offline(System.currentTimeMillis())
                     _screen.value = Screen.Connect
                 } else {
                     attach(conn.baseUrl, conn.token)
                     if (_screen.value is Screen.Connect) _screen.value = Screen.Sessions
                 }
+            }
+        }
+        viewModelScope.launch {
+            settings.profiles.collect { _profiles.value = it }
+        }
+        viewModelScope.launch {
+            settings.activeProfileId.collect { _activeProfileId.value = it }
+        }
+        viewModelScope.launch {
+            // Kuyruğu depodan bir kez oku (init).
+            val raw = settings.queue.first()
+            if (!raw.isNullOrBlank() && _pendingActions.value.isEmpty()) {
+                runCatching {
+                    queueJson.decodeFromString(ListSerializer(QueuedAction.serializer()), raw)
+                }.onSuccess { if (it.isNotEmpty()) _pendingActions.value = it }
             }
         }
         viewModelScope.launch {
@@ -170,24 +246,36 @@ class AppViewModel(
     // ------------------------------------------------------------ connection
 
     private fun attach(baseUrl: String, token: String) {
-        if (api != null && _connected.value) return
-        api = Api(baseUrl, token)
+        val url = baseUrl.trimEnd('/')
+        // Aynı bağlantı zaten kuruluysa dokunma; farklıysa (profil değişimi) yeniden kur.
+        if (api != null && _connected.value && apiBaseUrl == url && apiToken == token) return
+        sseCall?.cancel()
+        sseCall = null
+        reconnectJob?.cancel()
+        reconnectJob = null
+        sseAttempt = 0
+        api = Api(url, token)
+        apiBaseUrl = url
+        apiToken = token
         _connected.value = true
+        _connState.value = ConnState.Connecting(0, 0)
         subscribeEvents()
         refreshAgents()
         refreshModels()
         refreshCommands()
         refreshSessions()
+        flushQueue()
         // Plan varsa gözcü canlılığını başlangıçta bir kez sorgula (bayat banner temizliği için).
         if (_shutdownPlan.value != null) refreshShutdownStatus()
     }
 
-    /** Pairing kodu / URL'i ile bağlanır. */
+    /** Pairing kodu / URL'i ile bağlanır ve profili kaydeder. */
     fun connectWithCode(baseUrl: String, codeOrUrl: String, onDone: (String?) -> Unit) {
         viewModelScope.launch {
             try {
                 val token = Api.redeem(baseUrl, codeOrUrl)
-                settings.save(baseUrl, token)
+                val url = baseUrl.trimEnd('/')
+                settings.saveProfile(makeProfile(url, token))
                 onDone(null)
             } catch (e: Exception) {
                 onDone(e.message ?: "Bağlanılamadı")
@@ -195,13 +283,14 @@ class AppViewModel(
         }
     }
 
-    /** Sunucu parolası ile bağlanır (Basic auth parolası token yerine geçer). */
+    /** Sunucu parolası ile bağlanır (Basic auth parolası token yerine geçer) ve profili kaydeder. */
     fun connectWithPassword(baseUrl: String, password: String, onDone: (String?) -> Unit) {
         viewModelScope.launch {
             try {
-                val probe = Api(baseUrl, password)
+                val url = baseUrl.trimEnd('/')
+                val probe = Api(url, password)
                 probe.get("/api/info")
-                settings.save(baseUrl, password)
+                settings.saveProfile(makeProfile(url, password))
                 onDone(null)
             } catch (e: Exception) {
                 onDone(e.message ?: "Parola reddedildi")
@@ -209,14 +298,52 @@ class AppViewModel(
         }
     }
 
+    /** URL'den kısa bir profil adı üretir (host:port). */
+    private fun makeProfile(baseUrl: String, token: String): Profile {
+        val name = baseUrl.substringAfter("://").substringBefore("/").ifBlank { baseUrl }
+        return Profile(
+            id = System.currentTimeMillis().toString(),
+            name = name,
+            baseUrl = baseUrl,
+            token = token,
+        )
+    }
+
+    /** Profili seçer; değişim bağlantı akışını tetikleyerek yeniden bağlanır. */
+    fun selectProfile(id: String) {
+        viewModelScope.launch {
+            val wasActive = settings.activeProfileId.first() == id
+            settings.setActiveProfile(id)
+            // Zaten aktifse akış değişmez; yine de yeniden bağlanmayı dene.
+            if (wasActive) {
+                settings.profiles.first().firstOrNull { it.id == id }?.let { attach(it.baseUrl, it.token) }
+            }
+        }
+    }
+
+    /** Profili siler (aktifse bağlantı akışı bağlantıyı sıfırlar). */
+    fun deleteProfile(id: String) {
+        viewModelScope.launch { settings.deleteProfile(id) }
+    }
+
+    /**
+     * Bağlantıyı keser. Anlamı: aktif profili sil + SSE iptal + kapatma görevini iptal +
+     * api sıfırla. Tema ve kapatma planı KORUNUR (settings.clear() çağrılmaz).
+     */
     fun disconnect() {
         viewModelScope.launch {
             sseCall?.cancel()
             sseCall = null
+            reconnectJob?.cancel()
+            reconnectJob = null
             cancelShutdown()
+            settings.clearConnection()
             api = null
+            apiBaseUrl = null
+            apiToken = null
             _connected.value = false
-            settings.clear()
+            sseAttempt = 0
+            _connState.value = ConnState.Offline(System.currentTimeMillis())
         }
     }
 
@@ -227,19 +354,64 @@ class AppViewModel(
 
     // ----------------------------------------------------------------- SSE
 
+    /**
+     * SSE akışına yeniden abone olur. Kopuklukta üstel backoff ile (en fazla 30 sn)
+     * tekrar dener; `while(true)` sarmalı kurmaz, geri-çağrı + gecikmeli coroutine
+     * deseni kullanır. Yeniden bağlanmada `sseAttempt > 0` ise kaçan güncellemeler
+     * telafi edilir.
+     */
     private fun subscribeEvents() {
+        reconnectJob?.cancel()
+        reconnectJob = null
         sseCall?.cancel()
         val current = api ?: return
         sseCall = current.events(
+            onOpen = {
+                val reconnected = sseAttempt > 0
+                sseAttempt = 0
+                _connState.value = ConnState.Connected
+                if (reconnected) {
+                    // Kopukluk sırasında kaçan güncellemeleri telafi et.
+                    refreshSessions()
+                    refreshMessages()
+                    refreshPermissions()
+                    flushQueue()
+                }
+            },
             onEvent = ::handleEvent,
             onError = {
-                // Akış koptuysa yeniden bağlan
-                viewModelScope.launch {
-                    kotlinx.coroutines.delay(2000)
+                if (api !== current) return@events
+                reconnectJob?.cancel()
+                reconnectJob = viewModelScope.launch {
+                    sseAttempt += 1
+                    val wait = minOf(1 shl minOf(sseAttempt, 5), 30)   // 2^attempt sn, en fazla 30
+                    _connState.value = ConnState.Connecting(sseAttempt, wait)
+                    delay(wait * 1000L)
                     if (api === current) subscribeEvents()
                 }
             },
         )
+    }
+
+    /** Durum satırına dokununca hemen yeniden abone olur. */
+    fun reconnectNow() {
+        sseAttempt = 1
+        _connState.value = ConnState.Connecting(1, 0)
+        subscribeEvents()
+    }
+
+    /** Bekleyen izinleri tazeler (kopukluk sonrası telafi). */
+    private fun refreshPermissions() {
+        val current = api ?: return
+        viewModelScope.launch {
+            runCatching { current.pendingPermissions() }.onSuccess { list ->
+                _globalPermissions.value = list
+                val id = currentSessionId()
+                if (id != null) {
+                    _session.update { it.copy(permissions = list.filter { p -> p.str("sessionID") == id }) }
+                }
+            }
+        }
     }
 
     private fun handleEvent(ev: OcEvent) {
@@ -532,25 +704,31 @@ class AppViewModel(
     }
 
     fun sendPrompt(text: String) {
-        val current = api ?: return
         val id = currentSessionId() ?: return
-        viewModelScope.launch {
-            _session.update { it.copy(sending = true, error = null) }
-            try {
-                current.prompt(id, text)
-                _session.update { it.copy(sending = false) }
-                refreshMessages()
-            } catch (e: Exception) {
-                _session.update { it.copy(sending = false, error = e.message) }
-            }
+        _session.update { it.copy(sending = true, error = null) }
+        runOrQueue(
+            kind = "prompt",
+            sessionID = id,
+            label = "prompt: " + text.replace("\n", " ").take(40),
+            payload = buildJsonObject { put("text", text) }.toString(),
+            onError = { msg -> _session.update { it.copy(sending = false, error = msg) } },
+            onQueued = { _session.update { it.copy(sending = false) } },
+        ) { api ->
+            api.prompt(id, text)
+            _session.update { it.copy(sending = false) }
+            refreshMessages()
         }
     }
 
     fun interrupt() {
-        val current = api ?: return
         val id = currentSessionId() ?: return
-        viewModelScope.launch {
-            runCatching { current.interrupt(id) }
+        runOrQueue(
+            kind = "interrupt",
+            sessionID = id,
+            label = "durdur: oturum ${id.take(8)}",
+            payload = "{}",
+        ) { api ->
+            api.interrupt(id)
             refreshMessages()
         }
     }
@@ -892,18 +1070,19 @@ ve tek satır yaz: "kapatma görevi iptal edildi".
 
     /** Komutu (ör. /init, /review) açık oturumda çalıştırır. */
     fun runCommand(name: String, text: String) {
-        val current = api ?: return
         val id = currentSessionId() ?: return
-        viewModelScope.launch {
-            _session.update { it.copy(sending = true) }
-            runCatching { current.runCommand(id, name, text) }
-                .onSuccess {
-                    _session.update { it.copy(sending = false) }
-                    refreshMessages()
-                }
-                .onFailure { e ->
-                    _session.update { it.copy(sending = false, error = e.message) }
-                }
+        _session.update { it.copy(sending = true) }
+        runOrQueue(
+            kind = "command",
+            sessionID = id,
+            label = "komut: $name",
+            payload = buildJsonObject { put("name", name); put("text", text) }.toString(),
+            onError = { msg -> _session.update { it.copy(sending = false, error = msg) } },
+            onQueued = { _session.update { it.copy(sending = false) } },
+        ) { api ->
+            api.runCommand(id, name, text)
+            _session.update { it.copy(sending = false) }
+            refreshMessages()
         }
     }
 
@@ -950,10 +1129,17 @@ ve tek satır yaz: "kapatma görevi iptal edildi".
 
     /** Soru formunu yanıtla. answer: alan adı → değer. */
     fun replyForm(formID: String, answer: JsonObject) {
-        val current = api ?: return
         val id = currentSessionId() ?: return
-        viewModelScope.launch {
-            runCatching { current.replyForm(id, formID, answer) }
+        runOrQueue(
+            kind = "form",
+            sessionID = id,
+            label = "form yanıtı: ${formID.take(8)}",
+            payload = buildJsonObject {
+                put("formID", formID)
+                put("answer", answer)
+            }.toString(),
+        ) { api ->
+            api.replyForm(id, formID, answer)
             _session.update { st -> st.copy(forms = st.forms.filterNot { it.str("id") == formID }) }
         }
     }
@@ -971,9 +1157,136 @@ ve tek satır yaz: "kapatma görevi iptal edildi".
     // -------------------------------------------------------------- izinler
 
     fun replyPermission(sessionID: String, requestID: String, decision: String) {
-        val current = api ?: return
+        val onay = decision == "once" || decision == "always"
+        runOrQueue(
+            kind = "permission",
+            sessionID = sessionID,
+            label = "izin: ${if (onay) "onay" else "ret"} (oturum ${sessionID.take(8)})",
+            payload = buildJsonObject {
+                put("requestID", requestID)
+                put("decision", decision)
+            }.toString(),
+        ) { api ->
+            api.replyPermission(sessionID, requestID, decision)
+        }
+    }
+
+    // ------------------------------------------------- çevrimdışı kuyruk
+
+    /**
+     * [block]'u dener; sunucuya ulaşılamazsa (IOException ya da api==null) eylemi
+     * kuyruğa ekler. Sunucu reddederse (ApiException) kuyruğa EKLEMEZ, hatayı
+     * [onError] ile mevcut hata akışına bırakır.
+     */
+    private fun runOrQueue(
+        kind: String,
+        sessionID: String?,
+        label: String,
+        payload: String,
+        onError: (String) -> Unit = {},
+        onQueued: () -> Unit = {},
+        block: suspend (Api) -> Unit,
+    ) {
+        val current = api
+        if (current == null) {
+            enqueue(kind, sessionID, label, payload, null)
+            onQueued()
+            return
+        }
         viewModelScope.launch {
-            runCatching { current.replyPermission(sessionID, requestID, decision) }
+            try {
+                block(current)
+            } catch (e: ApiException) {
+                onError(e.message ?: "sunucu isteği reddetti")
+            } catch (e: IOException) {
+                enqueue(kind, sessionID, label, payload, e.message)
+                onQueued()
+            } catch (e: Exception) {
+                // Beklenmeyen hata (serileştirme vb.) — kuyruğa ekleme, yüzeye bırak.
+                onError(e.message ?: "beklenmeyen hata")
+            }
+        }
+    }
+
+    private fun enqueue(kind: String, sessionID: String?, label: String, payload: String, error: String?) {
+        val action = QueuedAction(
+            id = java.util.UUID.randomUUID().toString(),
+            kind = kind,
+            sessionID = sessionID,
+            label = label,
+            payload = payload,
+            lastError = error,
+        )
+        updateQueue(_pendingActions.value + action)
+    }
+
+    /** Kuyruğu tek noktadan güncelleyip kalıcı hale getirir. */
+    private fun updateQueue(list: List<QueuedAction>) {
+        _pendingActions.value = list
+        val raw = if (list.isEmpty()) {
+            null
+        } else {
+            queueJson.encodeToString(ListSerializer(QueuedAction.serializer()), list)
+        }
+        viewModelScope.launch { settings.setQueue(raw) }
+    }
+
+    /** Tek eylemi kuyruktan çıkarır. */
+    fun removeFromQueue(id: String) {
+        updateQueue(_pendingActions.value.filterNot { it.id == id })
+    }
+
+    /**
+     * Kuyruktaki eylemleri sırayla gönderir. Başarılı olanı listeden çıkarır,
+     * başarısız olanı `lastError` ile tutar. api null ise dokunmaz.
+     */
+    fun flushQueue() {
+        val current = api ?: return
+        val snapshot = _pendingActions.value
+        if (snapshot.isEmpty()) return
+        viewModelScope.launch {
+            val sent = mutableSetOf<String>()
+            val errors = mutableMapOf<String, String>()
+            for (action in snapshot) {
+                try {
+                    replay(current, action)
+                    sent.add(action.id)
+                } catch (e: ApiException) {
+                    errors[action.id] = e.message ?: "sunucu reddetti"
+                } catch (e: IOException) {
+                    errors[action.id] = e.message ?: "bağlantı yok"
+                } catch (e: Exception) {
+                    errors[action.id] = e.message ?: "beklenmeyen hata"
+                }
+            }
+            // Bu sırada yeni eklenen eylemleri koru.
+            val updated = _pendingActions.value.mapNotNull { a ->
+                when {
+                    a.id in sent -> null
+                    errors.containsKey(a.id) -> a.copy(lastError = errors[a.id])
+                    else -> a
+                }
+            }
+            updateQueue(updated)
+        }
+    }
+
+    private suspend fun replay(api: Api, a: QueuedAction) {
+        val p = runCatching { queueJson.parseToJsonElement(a.payload).obj() }.getOrDefault(JsonObject(emptyMap()))
+        val sid = a.sessionID
+        when (a.kind) {
+            "prompt" -> if (sid != null) api.prompt(sid, p.str("text").orEmpty())
+            "interrupt" -> if (sid != null) api.interrupt(sid)
+            "permission" -> if (sid != null) {
+                api.replyPermission(sid, p.str("requestID").orEmpty(), p.str("decision") ?: "once")
+            }
+            "command" -> if (sid != null) {
+                api.runCommand(sid, p.str("name").orEmpty(), p.str("text").orEmpty())
+            }
+            "form" -> if (sid != null) {
+                api.replyForm(sid, p.str("formID").orEmpty(), p.obj("answer"))
+            }
+            else -> Unit
         }
     }
 

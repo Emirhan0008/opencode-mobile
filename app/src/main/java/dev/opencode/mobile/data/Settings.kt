@@ -1,24 +1,43 @@
 package dev.opencode.mobile.data
 
 import android.content.Context
+import androidx.datastore.preferences.core.MutablePreferences
+import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.builtins.ListSerializer
+import kotlinx.serialization.json.Json
 
 private val Context.dataStore by preferencesDataStore(name = "opencode")
 
 data class Connection(val baseUrl: String, val token: String)
 
-/** Bağlantı ayarları (sunucu adresi + token) ve tema tercihi kalıcı olarak saklanır. */
+/** Kayıtlı bağlantı profili: sunucu adresi + token (veya parola). */
+@Serializable
+data class Profile(
+    val id: String,
+    val name: String,
+    val baseUrl: String,
+    val token: String,
+)
+
+/** Bağlantı profilleri, tema tercihi ve kapatma planı kalıcı olarak saklanır. */
 class Settings(private val context: Context) {
 
     private val keyUrl = stringPreferencesKey("base_url")
     private val keyToken = stringPreferencesKey("token")
     private val keyDarkTheme = booleanPreferencesKey("dark_theme")
     private val keyShutdownPlan = stringPreferencesKey("shutdown_plan")
+    private val keyProfiles = stringPreferencesKey("profiles")
+    private val keyActiveProfile = stringPreferencesKey("active_profile")
+    private val keyQueue = stringPreferencesKey("queue")
+
+    private val json = Json { ignoreUnknownKeys = true }
 
     /**
      * Planlanmış kapatma:
@@ -27,19 +46,105 @@ class Settings(private val context: Context) {
      */
     val shutdownPlan: Flow<String?> = context.dataStore.data.map { prefs -> prefs[keyShutdownPlan] }
 
+    /** Kayıtlı bağlantı profilleri. `profiles` anahtarı hiç yazılmadıysa eski tek
+     *  bağlantı (`base_url`+`token`) da `legacy` kimlikli bir profil olarak görünür. */
+    val profiles: Flow<List<Profile>> = context.dataStore.data.map { prefs ->
+        if (prefs.contains(keyProfiles)) decodeProfiles(prefs[keyProfiles]) else legacyProfiles(prefs)
+    }
+
+    /** Aktif profilin kimliği (yoksa null). Eski tek bağlantı `legacy` olarak görünür. */
+    val activeProfileId: Flow<String?> = context.dataStore.data.map { prefs ->
+        prefs[keyActiveProfile]
+            ?: if (prefs.contains(keyProfiles)) null else legacyProfiles(prefs).firstOrNull()?.id
+    }
+
+    /**
+     * Etkin bağlantı, aktif profilden türetilir.
+     *
+     * GERİYE DÖNÜK UYUM: `profiles` anahtarı HİÇ yazılmadıysa (containsKey=false) eski
+     * `base_url` + `token` değerleri okunur. `profiles` bir kez yazıldıysa (boş liste
+     * dahil) artık eski anahtarlara düşülmez — son profil silindiğinde eski bağlantı
+     * dirilmesin.
+     */
     val connection: Flow<Connection?> = context.dataStore.data.map { prefs ->
-        val url = prefs[keyUrl]
-        val token = prefs[keyToken]
-        if (url.isNullOrBlank() || token.isNullOrBlank()) null else Connection(url, token)
+        if (prefs.contains(keyProfiles)) {
+            val activeId = prefs[keyActiveProfile]
+            // Aktif profil açıkça kaldırıldıysa (çıkış) bağlantı yok — listeye takılma.
+            if (activeId == null) return@map null
+            val list = decodeProfiles(prefs[keyProfiles])
+            val active = list.firstOrNull { it.id == activeId } ?: list.firstOrNull()
+            active?.let { Connection(it.baseUrl, it.token) }
+        } else {
+            val url = prefs[keyUrl]
+            val token = prefs[keyToken]
+            if (url.isNullOrBlank() || token.isNullOrBlank()) null else Connection(url, token)
+        }
     }
 
     /** true = koyu tema, false = açık tema. */
     val darkTheme: Flow<Boolean> = context.dataStore.data.map { prefs -> prefs[keyDarkTheme] ?: true }
 
+    /** Çevrimdışı kuyruk (JSON listesi) — biçimini AppViewModel belirler. */
+    val queue: Flow<String?> = context.dataStore.data.map { prefs -> prefs[keyQueue] }
+
+    /** Eski kullanım: tek bağlantıyı kaydeder (profillerin dışında). */
     suspend fun save(baseUrl: String, token: String) {
         context.dataStore.edit { prefs ->
             prefs[keyUrl] = baseUrl.trimEnd('/')
             prefs[keyToken] = token
+        }
+    }
+
+    /** Profili ekler/günceller ve aktif yapar. Eski tek bağlantı ilk yazımda listeye taşınır. */
+    suspend fun saveProfile(p: Profile) {
+        context.dataStore.edit { prefs ->
+            val list = migrateLegacy(prefs).toMutableList()
+            val idx = list.indexOfFirst { it.id == p.id }
+            if (idx >= 0) list[idx] = p else list.add(p)
+            prefs[keyProfiles] = json.encodeToString(ListSerializer(Profile.serializer()), list)
+            prefs[keyActiveProfile] = p.id
+        }
+    }
+
+    /**
+     * Profili siler. Silinen aktif profilse aktif, kalan ilk profile taşınır;
+     * hiç kalmadıysa aktif null yapılır.
+     */
+    suspend fun deleteProfile(id: String) {
+        context.dataStore.edit { prefs ->
+            val list = decodeProfiles(prefs[keyProfiles]).toMutableList()
+            list.removeAll { it.id == id }
+            prefs[keyProfiles] = json.encodeToString(ListSerializer(Profile.serializer()), list)
+            if (prefs[keyActiveProfile] == id) {
+                if (list.isEmpty()) prefs.remove(keyActiveProfile)
+                else prefs[keyActiveProfile] = list.first().id
+            }
+        }
+    }
+
+    /** Aktif profili seçer. */
+    suspend fun setActiveProfile(id: String) {
+        context.dataStore.edit { prefs -> prefs[keyActiveProfile] = id }
+    }
+
+    /**
+     * Etkin bağlantıyı kaldırır: aktif profil seçimi temizlenir, uygulama bağlanmamış
+     * duruma geçer ama kayıtlı profiller LISTEDE KALIR (yeniden bağlanmak için
+     * dokunmak yeterlidir). Eski tek bağlantı önce listeye taşınır ki kaybolmasın.
+     * Tema ve kapatma planı KORUNUR.
+     */
+    suspend fun clearConnection() {
+        context.dataStore.edit { prefs ->
+            if (!prefs.contains(keyProfiles)) {
+                // Eski tek bağlantıyı gerçek profile dönüştür; anahtarları temizle.
+                prefs[keyProfiles] = json.encodeToString(
+                    ListSerializer(Profile.serializer()),
+                    legacyProfiles(prefs),
+                )
+                prefs.remove(keyUrl)
+                prefs.remove(keyToken)
+            }
+            prefs.remove(keyActiveProfile)
         }
     }
 
@@ -53,7 +158,40 @@ class Settings(private val context: Context) {
         }
     }
 
-    suspend fun clear() {
-        context.dataStore.edit { it.clear() }
+    /** Çevrimdışı kuyruğu kaydeder (null = boş/temizle). */
+    suspend fun setQueue(raw: String?) {
+        context.dataStore.edit { prefs ->
+            if (raw == null) prefs.remove(keyQueue) else prefs[keyQueue] = raw
+        }
+    }
+
+    private fun decodeProfiles(raw: String?): List<Profile> {
+        if (raw.isNullOrBlank()) return emptyList()
+        return runCatching {
+            json.decodeFromString(ListSerializer(Profile.serializer()), raw)
+        }.getOrDefault(emptyList())
+    }
+
+    /** Eski tek-bağlantı anahtarlarından görünür profil (`legacy` kimliği). */
+    private fun legacyProfiles(prefs: Preferences): List<Profile> {
+        val url = prefs[keyUrl]?.takeIf { it.isNotBlank() } ?: return emptyList()
+        val token = prefs[keyToken]?.takeIf { it.isNotBlank() } ?: return emptyList()
+        val name = url.substringAfter("://").substringBefore("/").ifBlank { url }
+        return listOf(Profile(id = LEGACY_ID, name = name, baseUrl = url, token = token))
+    }
+
+    /**
+     * İlk profil yazımında eski tek bağlantıyı listeye taşır ki kaybolmasın.
+     * `profiles` anahtarı bir kez yazıldıktan sonra eski anahtarlara dönülmez.
+     */
+    private fun migrateLegacy(prefs: MutablePreferences): List<Profile> {
+        val existing = decodeProfiles(prefs[keyProfiles])
+        if (prefs.contains(keyProfiles)) return existing
+        return existing + legacyProfiles(prefs)
+    }
+
+    companion object {
+        /** Eski tek-bağlantı (base_url+token) görünümünün profil kimliği. */
+        const val LEGACY_ID = "legacy"
     }
 }

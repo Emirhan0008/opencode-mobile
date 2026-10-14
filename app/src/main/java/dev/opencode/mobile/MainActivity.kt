@@ -70,6 +70,10 @@ private fun Root(vm: AppViewModel, dark: Boolean) {
     val globalPermissions by vm.globalPermissions.collectAsState()
     val shutdownPlan by vm.shutdownPlan.collectAsState()
     val watchStatus by vm.watchStatus.collectAsState()
+    val profiles by vm.profiles.collectAsState()
+    val activeProfileId by vm.activeProfileId.collectAsState()
+    val connState by vm.connState.collectAsState()
+    val pendingActions by vm.pendingActions.collectAsState()
     var connectError by remember { mutableStateOf<String?>(null) }
     var connecting by remember { mutableStateOf(false) }
 
@@ -77,6 +81,10 @@ private fun Root(vm: AppViewModel, dark: Boolean) {
         Screen.Connect -> ConnectScreen(
             connecting = connecting,
             error = connectError,
+            profiles = profiles,
+            activeProfileId = activeProfileId,
+            onSelectProfile = vm::selectProfile,
+            onDeleteProfile = vm::deleteProfile,
             onConnectCode = { baseUrl, codeOrUrl ->
                 connecting = true
                 connectError = null
@@ -115,6 +123,11 @@ private fun Root(vm: AppViewModel, dark: Boolean) {
             shutdownAt = shutdownPlan?.split('|')?.getOrNull(2)?.takeIf { it != "-" },
             watchStatus = watchStatus,
             onRefreshWatch = vm::refreshShutdownStatus,
+            connState = connState,
+            onReconnect = vm::reconnectNow,
+            pendingActions = pendingActions,
+            onRemoveQueued = vm::removeFromQueue,
+            onFlushQueue = vm::flushQueue,
         )
 
         is Screen.Session -> SessionScreen(

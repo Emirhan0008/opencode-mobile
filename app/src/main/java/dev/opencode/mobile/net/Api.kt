@@ -201,9 +201,15 @@ class Api(baseUrl: String, private val token: String) {
 
     /**
      * Olay akışına abone olur. Dönen [Call] iptal edilerek bağlantı kapatılır.
-     * Hatada [onError] çağrılır; akış kapanınca yeniden bağlanmak çağıranın sorumluluğundadır.
+     * HTTP yanıtı başarıyla açılınca [onOpen], her olayda [onEvent], hatada [onError]
+     * çağrılır; akış kapanınca yeniden bağlanmak çağıranın sorumluluğundadır.
+     * [onOpen] bağlantı durumu yüzeyi içindir (kopukluk sonrası "yeniden bağlandı" tespiti).
      */
-    fun events(onEvent: (OcEvent) -> Unit, onError: (Throwable) -> Unit = {}): Call {
+    fun events(
+        onOpen: () -> Unit = {},
+        onEvent: (OcEvent) -> Unit,
+        onError: (Throwable) -> Unit = {},
+    ): Call {
         val call = client.newCall(builder("/api/event").header("Accept", "text/event-stream").get().build())
         call.enqueue(object : Callback {
             override fun onFailure(call: Call, e: IOException) {
@@ -221,6 +227,7 @@ class Api(baseUrl: String, private val token: String) {
                         onError(IOException("SSE gövdesi boş"))
                         return
                     }
+                    onOpen()
                     try {
                         while (true) {
                             val line = source.readUtf8Line() ?: break
