@@ -36,6 +36,7 @@ import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -52,13 +53,17 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import dev.opencode.mobile.LiveMessage
 import dev.opencode.mobile.R
@@ -69,6 +74,7 @@ import dev.opencode.mobile.net.num
 import dev.opencode.mobile.net.obj
 import dev.opencode.mobile.net.str
 import dev.opencode.mobile.net.text
+import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
@@ -148,6 +154,8 @@ fun SessionScreen(
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
+                    // ikinci ince satır: model · ajan · oturum tokenları · sonuç rozeti
+                    SessionContextLine(state.session)
                 }
                 if (state.busy) {
                     Text(
@@ -490,7 +498,7 @@ private fun MessageCard(
     val id = msg.str("id")
     if (id != null && id == liveID) return // canlı kart bunun yerine gösteriliyor
     val type = msg.str("type")
-    if (type != "user" && type != "assistant") return
+    if (type != "user" && type != "assistant" && type != "compaction" && type != "synthetic") return
 
     var menu by remember { mutableStateOf(false) }
     val clipboard = LocalClipboardManager.current
@@ -515,7 +523,7 @@ private fun MessageCard(
                     for (raw in msg.arr("content")) {
                         val part = raw.obj()
                         when (part.str("type")) {
-                            "text" -> Text(part.str("text").orEmpty(), style = MaterialTheme.typography.bodyLarge)
+                            "text" -> RichText(part.str("text").orEmpty())
                             "reasoning" -> ReasoningBlock(part.str("text").orEmpty())
                             "tool" -> ToolBlock(part)
                         }
@@ -530,8 +538,22 @@ private fun MessageCard(
                             modifier = Modifier.padding(top = 4.dp),
                         )
                     }
+                    // tur özeti: süre · token · maliye · bitiş rozeti (ince ayraçla ayrılır)
+                    TurnMeta(msg)
                 }
             }
+
+            "compaction" -> CollapsibleNotice(
+                glyph = "⇲ bağlam sıkıştırıldı",
+                color = Oc.purple,
+                body = plain,
+            )
+
+            "synthetic" -> CollapsibleNotice(
+                glyph = "◇ sentetik",
+                color = Oc.dim,
+                body = plain,
+            )
         }
 
         // uzun basma menüsü: kopyala / alıntıla / geri al
@@ -575,14 +597,199 @@ private fun messageText(msg: JsonObject): String = when (msg.str("type")) {
             else -> null
         }
     }.filter { it.isNotBlank() }.joinToString("\n\n")
+    // bağlam sıkıştırma / sentetik mesajlar: düz `text` ya da `content[]` içinde özet
+    "compaction", "synthetic" -> msg.str("text")?.trim()?.takeIf { it.isNotBlank() }
+        ?: msg.arr("content").mapNotNull { it.obj().str("text")?.trim() }
+            .filter { it.isNotBlank() }.joinToString("\n\n")
     else -> ""
+}
+
+/** Tur özeti: ince ayraç + süre · token · maliye · bitiş rozeti + değişen dosyalar. */
+@Composable
+private fun TurnMeta(msg: JsonObject) {
+    val time = msg.obj("time")
+    val created = time.num("created")?.toLong()
+    val completed = time.num("completed")?.toLong()
+    val dur = if (created != null && completed != null && completed >= created) {
+        fmtDuration(completed - created)
+    } else {
+        "akıyor…"
+    }
+
+    HorizontalDivider(
+        color = Oc.border,
+        thickness = 1.dp,
+        modifier = Modifier.padding(top = 6.dp, bottom = 4.dp),
+    )
+
+    val tokens = tokenLine(msg.obj("tokens"))
+    val cost = msg.num("cost") ?: 0.0
+    val summary = buildString {
+        append(dur)
+        if (tokens.isNotBlank()) {
+            append(" · ")
+            append(tokens)
+        }
+        if (cost > 0) {
+            append(" · ")
+            append(fmtCost(cost))
+        }
+    }
+
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Text(
+            summary,
+            color = Oc.dim,
+            style = MaterialTheme.typography.labelSmall,
+            modifier = Modifier.weight(1f),
+        )
+        finishBadge(msg.str("finish"))?.let { (label, color) ->
+            Spacer(Modifier.width(6.dp))
+            Text(label, color = color, style = MaterialTheme.typography.labelSmall)
+        }
+    }
+
+    ChangedFiles(msg.obj("snapshot").arr("files").mapNotNull { it.text() })
+}
+
+/** Bitmiş turun `finish` değerini rozet metni + rengine çevirir (bilinmeyen: olduğu gibi). */
+private fun finishBadge(finish: String?): Pair<String, Color>? = when (finish) {
+    "stop" -> "✓ bitti" to Oc.accent
+    "tool-calls" -> "↳ araç bekliyor" to Oc.blue
+    "length" -> "✂ uzunluk doldu" to Oc.warn
+    "error" -> "✖ hata" to Oc.err
+    null, "" -> null
+    else -> finish to Oc.dim
+}
+
+/** `snapshot.files` boş değilse dokununca açılan değişen dosya listesi. */
+@Composable
+private fun ChangedFiles(files: List<String>) {
+    if (files.isEmpty()) return
+    var open by remember { mutableStateOf(false) }
+    Column(Modifier.fillMaxWidth().padding(top = 2.dp)) {
+        Text(
+            (if (open) "▾ " else "▸ ") + "▤ ${files.size} dosya değişti",
+            color = Oc.dim,
+            style = MaterialTheme.typography.labelSmall,
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(3.dp))
+                .clickable { open = !open }
+                .padding(vertical = 2.dp),
+        )
+        if (open) {
+            for (f in files) {
+                Text(
+                    if (f.length > 70) "…" + f.takeLast(70) else f,
+                    color = Oc.text,
+                    style = MaterialTheme.typography.bodySmall,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 2.dp)
+                        .clip(RoundedCornerShape(2.dp))
+                        .background(Oc.codeBg)
+                        .padding(horizontal = 6.dp, vertical = 3.dp),
+                )
+            }
+        }
+    }
+}
+
+/** compaction / synthetic mesajları için tam genişlikte, katlanır ince şerit. */
+@Composable
+private fun CollapsibleNotice(glyph: String, color: Color, body: String) {
+    var open by remember { mutableStateOf(false) }
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(3.dp))
+            .background(Oc.panelAlt)
+            .border(1.dp, Oc.border, RoundedCornerShape(3.dp)),
+    ) {
+        Text(
+            (if (open) "▾ " else "▸ ") + glyph,
+            color = color,
+            style = MaterialTheme.typography.labelSmall,
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { open = !open }
+                .padding(horizontal = 8.dp, vertical = 4.dp),
+        )
+        if (open && body.isNotBlank()) {
+            RichText(
+                body,
+                style = MaterialTheme.typography.bodySmall,
+                color = Oc.dim,
+                modifier = Modifier.padding(start = 8.dp, end = 8.dp, bottom = 8.dp),
+            )
+        }
+    }
+}
+
+/** Oturum başlığının altındaki ikinci ince satır: model · ajan · toplam token · sonuç. */
+@Composable
+private fun SessionContextLine(session: JsonObject?) {
+    if (session == null) return
+    val model = session.obj("model")
+    val modelText = buildString {
+        append(model.str("providerID") ?: "?")
+        append('/')
+        append(model.str("id") ?: "?")
+        model.str("variant")?.let { append('#').append(it) }
+    }
+    val agent = session.str("agent") ?: "?"
+    val tokens = tokenLine(session.obj("tokens"))
+    val line = buildAnnotatedString {
+        withStyle(SpanStyle(color = Oc.blue)) { append(modelText) }
+        append(" · ")
+        append(agent)
+        if (tokens.isNotBlank()) {
+            append(" · ")
+            append(tokens)
+        }
+        when (session.str("outcome")) {
+            "succeeded" -> {
+                append(" · ")
+                withStyle(SpanStyle(color = Oc.accent)) { append("✓ tamamlandı") }
+            }
+
+            "failed" -> {
+                append(" · ")
+                withStyle(SpanStyle(color = Oc.err)) { append("✖ başarısız") }
+            }
+        }
+    }
+    Text(
+        line,
+        style = MaterialTheme.typography.labelSmall,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+    )
+}
+
+/** `tokens` nesnesini "40,4M girdi · 1,1M çıktı · 1,2M düşünme · 1,13G önbellek" yapar. */
+private fun tokenLine(tokens: JsonObject): String {
+    val cache = tokens.obj("cache")
+    val input = tokens.num("input") ?: 0.0
+    val output = tokens.num("output") ?: 0.0
+    val reasoning = tokens.num("reasoning") ?: 0.0
+    val cacheRead = cache.num("read") ?: 0.0
+    val parts = mutableListOf<String>()
+    if (input > 0) parts += fmtCount(input.toLong()) + " girdi"
+    if (output > 0) parts += fmtCount(output.toLong()) + " çıktı"
+    if (reasoning > 0) parts += fmtCount(reasoning.toLong()) + " düşünme"
+    if (cacheRead > 0) parts += fmtCount(cacheRead.toLong()) + " önbellek"
+    return parts.joinToString(" · ")
 }
 
 @Composable
 private fun LiveCard(live: LiveMessage) {
     Panel(border = Oc.accent, header = "▸ akıyor…") {
         if (live.reasoning.isNotBlank()) ReasoningBlock(live.reasoning)
-        if (live.text.isNotBlank()) Text(live.text, style = MaterialTheme.typography.bodyLarge)
+        if (live.text.isNotBlank()) RichText(live.text)
         for (tool in live.tools) {
             LiveToolBlock(tool)
         }
@@ -610,7 +817,7 @@ private fun ReasoningBlock(text: String) {
             Text("${text.length} krk", color = Oc.dim, style = MaterialTheme.typography.labelSmall)
         }
         if (open) {
-            Text(
+            RichText(
                 text,
                 color = Oc.purple,
                 style = MaterialTheme.typography.bodySmall,
@@ -645,7 +852,7 @@ private fun ToolDetails(input: String, output: String, error: String) {
                     modifier = Modifier.padding(top = 4.dp),
                 )
                 Text(
-                    input.take(1500),
+                    truncate(input, 8000),
                     color = Oc.dim,
                     style = MaterialTheme.typography.bodySmall,
                     modifier = Modifier.fillMaxWidth().background(Oc.codeBg).padding(6.dp),
@@ -659,7 +866,7 @@ private fun ToolDetails(input: String, output: String, error: String) {
                     modifier = Modifier.padding(top = 4.dp),
                 )
                 Text(
-                    output.take(2500),
+                    truncate(output, 20000),
                     color = Oc.text,
                     style = MaterialTheme.typography.bodySmall,
                     modifier = Modifier.fillMaxWidth().background(Oc.codeBg).padding(6.dp),
@@ -672,11 +879,17 @@ private fun ToolDetails(input: String, output: String, error: String) {
     }
 }
 
+/** Uzun çıktıyı sınırlar; kesilirse sonuna kaç karakter kesildiğini ekler. */
+private fun truncate(s: String, limit: Int): String =
+    if (s.length <= limit) s else s.take(limit) + "\n… (kesildi, ${s.length - limit} krk)"
+
+private val prettyJson = Json { prettyPrint = true }
+
 private fun toolInputText(state: JsonObject): String {
     val el = state["input"] ?: return ""
     return when (el) {
         is JsonPrimitive -> el.content
-        else -> el.toString()
+        else -> prettyJson.encodeToString(JsonElement.serializer(), el)
     }
 }
 
@@ -685,6 +898,10 @@ private fun ToolBlock(part: JsonObject) {
     val name = part.str("name") ?: "tool"
     val state = part.obj("state")
     val status = state.str("status") ?: "?"
+    val meta = state.obj("metadata")
+    val exit = meta.num("exit")?.toInt()
+    val truncated = meta.str("truncated") == "true"
+    val dur = durationOf(part.obj("time"))
 
     Column(Modifier.fillMaxWidth()) {
         Row(
@@ -700,6 +917,18 @@ private fun ToolBlock(part: JsonObject) {
             Text("tool · $name", color = Oc.blue, style = MaterialTheme.typography.labelLarge)
             Spacer(Modifier.width(8.dp))
             Text(status, color = Oc.dim, style = MaterialTheme.typography.labelSmall)
+            dur?.let {
+                Spacer(Modifier.width(6.dp))
+                Text(it, color = Oc.dim, style = MaterialTheme.typography.labelSmall)
+            }
+            if (exit != null && exit != 0) {
+                Spacer(Modifier.width(6.dp))
+                Text("exit $exit", color = Oc.err, style = MaterialTheme.typography.labelSmall)
+            }
+            if (truncated) {
+                Spacer(Modifier.width(6.dp))
+                Text("kesildi", color = Oc.warn, style = MaterialTheme.typography.labelSmall)
+            }
         }
         ToolDetails(
             input = toolInputText(state),
@@ -707,6 +936,14 @@ private fun ToolBlock(part: JsonObject) {
             error = state.obj("error").str("message").orEmpty(),
         )
     }
+}
+
+/** `time.created` → `time.completed` farkı; ikisi de varsa "3,2 sn" döner. */
+private fun durationOf(time: JsonObject): String? {
+    val created = time.num("created")?.toLong() ?: return null
+    val completed = time.num("completed")?.toLong() ?: return null
+    if (completed < created) return null
+    return fmtDuration(completed - created)
 }
 
 @Composable
