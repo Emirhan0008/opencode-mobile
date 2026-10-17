@@ -19,8 +19,11 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
@@ -120,6 +123,7 @@ fun SessionScreen(
             Modifier
                 .fillMaxWidth()
                 .background(Oc.panel)
+                .statusBarsPadding()
                 .border(1.dp, Oc.border),
         ) {
             Row(
@@ -270,6 +274,8 @@ fun SessionScreen(
                 .fillMaxWidth()
                 .background(Oc.panel)
                 .border(1.dp, Oc.border)
+                .navigationBarsPadding()
+                .imePadding()
                 .padding(6.dp),
             verticalAlignment = Alignment.Bottom,
         ) {
@@ -801,6 +807,8 @@ private fun LiveCard(live: LiveMessage) {
 
 @Composable
 private fun ReasoningBlock(text: String) {
+    // boş düşünme parçaları için "0 krk" gösterme
+    if (text.isBlank()) return
     var open by remember { mutableStateOf(false) }
     Column(Modifier.fillMaxWidth()) {
         Row(
@@ -959,7 +967,11 @@ private fun LiveToolBlock(tool: ToolRow) {
         ) {
             Text(statusIcon(tool.status), style = MaterialTheme.typography.labelLarge)
             Spacer(Modifier.width(6.dp))
-            Text("tool · ${tool.name}", color = Oc.blue, style = MaterialTheme.typography.labelLarge)
+            Text(
+                if (tool.name.isBlank() || tool.name == "tool") "tool" else "tool · ${tool.name}",
+                color = Oc.blue,
+                style = MaterialTheme.typography.labelLarge,
+            )
         }
         ToolDetails(input = tool.input, output = tool.output, error = tool.error)
     }

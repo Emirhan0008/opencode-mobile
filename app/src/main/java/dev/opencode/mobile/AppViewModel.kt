@@ -547,6 +547,7 @@ class AppViewModel(
                 if (sid != currentSessionId()) return
                 upsertTool(d) {
                     it.copy(
+                        name = d.str("name") ?: it.name,
                         status = "running",
                         input = d.obj("input").toString().takeIf { s -> s != "{}" } ?: it.input,
                     )
@@ -558,7 +559,7 @@ class AppViewModel(
             "session.tool.success" -> {
                 if (sid != currentSessionId()) return
                 upsertTool(d) {
-                    it.copy(status = "ok", output = toolContent(d) ?: it.output)
+                    it.copy(name = d.str("name") ?: it.name, status = "ok", output = toolContent(d) ?: it.output)
                 }
             }
 
@@ -566,7 +567,7 @@ class AppViewModel(
                 if (sid != currentSessionId()) return
                 upsertTool(d) {
                     val msg = d.obj("error").str("message") ?: d.str("error") ?: "hata"
-                    it.copy(status = "error", error = msg, output = toolContent(d) ?: it.output)
+                    it.copy(name = d.str("name") ?: it.name, status = "error", error = msg, output = toolContent(d) ?: it.output)
                 }
             }
 

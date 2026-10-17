@@ -1,22 +1,30 @@
 package dev.opencode.mobile
 
 import android.Manifest
+import android.app.Activity
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Color
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.SystemBarStyle
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import androidx.core.view.WindowCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
 import dev.opencode.mobile.ui.ConnectScreen
 import dev.opencode.mobile.ui.OpenCodeTheme
@@ -31,6 +39,12 @@ class MainActivity : ComponentActivity() {
     private var pendingSessionId by mutableStateOf<String?>(null)
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        // Android 15 (targetSdk 35) edge-to-edge zorunlu kılar; tüm sürümlerde tutarlı
+        // davranış için açıkça etkinleştiriyoruz ve ekranlar inset boşluğu uyguluyor.
+        enableEdgeToEdge(
+            statusBarStyle = SystemBarStyle.dark(Color.TRANSPARENT),
+            navigationBarStyle = SystemBarStyle.dark(Color.TRANSPARENT),
+        )
         super.onCreate(savedInstanceState)
         requestNotificationPermission()
         pendingSessionId = intent?.getStringExtra(Notifier.EXTRA_SESSION_ID)
@@ -99,6 +113,25 @@ private fun Root(
     val notifyWork by vm.notifyWork.collectAsState()
     var connectError by remember { mutableStateOf<String?>(null) }
     var connecting by remember { mutableStateOf(false) }
+
+    // Edge-to-edge: sistem çubuğu ikonları uygulama temasına uysun.
+    val view = LocalView.current
+    SideEffect {
+        val window = (view.context as? Activity)?.window ?: return@SideEffect
+        WindowCompat.getInsetsController(window, view).apply {
+            isAppearanceLightStatusBars = !dark
+            isAppearanceLightNavigationBars = !dark
+        }
+    }
+
+    // Sistem geri tuşu: oturum ve ayarlar ekranlarından oturum listesine dön.
+    BackHandler(enabled = screen !is Screen.Sessions) {
+        when (screen) {
+            Screen.Settings -> vm.closeSettings()
+            is Screen.Session -> vm.goBack()
+            else -> Unit
+        }
+    }
 
     // Bildirimden gelen oturum isteği (kolaylık) — varsa aç ve tüket.
     LaunchedEffect(openSessionId) {
