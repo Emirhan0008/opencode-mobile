@@ -81,6 +81,12 @@ enum class SessionFilter(val label: String) {
     RECENT("son 24s"),
 }
 
+/** Oturum listesi satırı: gerçek oturum ya da iç içe grubu açan başlık. */
+private sealed interface SessionListRow {
+    data class Item(val obj: JsonObject, val depth: Int) : SessionListRow
+    data class Expander(val parentID: String, val count: Int, val expanded: Boolean, val depth: Int) : SessionListRow
+}
+
 @Composable
 fun SessionsScreen(
     state: SessionsState,
@@ -124,6 +130,8 @@ fun SessionsScreen(
     var query by remember { mutableStateOf("") }
     // Alt ajan (subagent) oturumları varsayılan olarak gizli — "tümü" ile açılır.
     var filter by remember { mutableStateOf(SessionFilter.TOP) }
+    // TOP görünümünde çocuk oturum grubu açık mı (parentID kümesi).
+    var expanded by remember { mutableStateOf(emptySet<String>()) }
 
     // Çevrimdışıyken geçen süreyi canlı göstermek için saniyelik tik.
     var nowTick by remember { mutableStateOf(System.currentTimeMillis()) }
@@ -381,16 +389,17 @@ fun SessionsScreen(
     ) { padding ->
         Box(Modifier.padding(padding).fillMaxSize()) {
             val now = System.currentTimeMillis()
-            val visible = state.sessions.filter { s ->
-                val id = s.str("id").orEmpty()
+
+            fun matchesQuery(s: JsonObject): Boolean {
                 val title = s.str("title").orEmpty()
                 val dir = s.obj("location").str("directory").orEmpty()
-                val matchesQuery = query.isBlank() ||
-                    title.contains(query, ignoreCase = true) ||
-                    dir.contains(query, ignoreCase = true) ||
-                    id.contains(query, ignoreCase = true)
-                val matchesFilter = when (filter) {
-                    SessionFilter.TOP -> s.str("parentID") == null
+                val id = s.str("id").orEmpty()
+                return query.isBlank() || title.contains(query, true) || dir.contains(query, true) || id.contains(query, true)
+            }
+            fun matchesFilter(s: JsonObject): Boolean {
+                val id = s.str("id").orEmpty()
+                return when (filter) {
+                    SessionFilter.TOP -> true
                     SessionFilter.ALL -> true
                     SessionFilter.ACTIVE -> state.active.contains(id)
                     SessionFilter.RECENT -> {
@@ -398,14 +407,50 @@ fun SessionsScreen(
                         now - updated.toLong() < 24L * 60 * 60 * 1000
                     }
                 }
-                matchesQuery && matchesFilter
+            }
+            // Alt ajanlar (child session) yalnızca ÇALIŞIRKEN gösterilir; bitmiş olanlar
+            // hiçbir filtrede listelenmez (gürültüyü önler).
+            val matching = state.sessions
+                .filter { matchesQuery(it) }
+                .filter { it.str("parentID") == null || state.active.contains(it.str("id")) }
+
+            val rows: List<SessionListRow> = if (filter == SessionFilter.TOP) {
+                // "Üst düzey": kök oturumlar + altındaki alt ajanlar iç içe (özyineli).
+                val matchingIds = matching.mapNotNull { it.str("id") }.toSet()
+                val byUpdated: (JsonObject) -> Double = {
+                    it.obj("time").num("updated") ?: it.obj("time").num("created") ?: 0.0
+                }
+                val childrenByParent = matching
+                    .filter { it.str("parentID") != null }
+                    .groupBy { it.str("parentID").orEmpty() }
+                val roots = matching
+                    .filter { it.str("parentID") == null || it.str("parentID").orEmpty() !in matchingIds }
+                    .sortedByDescending(byUpdated)
+                buildList {
+                    val emitted = HashSet<String>()
+                    fun emit(s: JsonObject, depth: Int) {
+                        val sid = s.str("id").orEmpty()
+                        if (sid.isNotEmpty() && !emitted.add(sid)) return // döngü koruması
+                        add(SessionListRow.Item(s, depth))
+                        val kids = childrenByParent[sid].orEmpty().sortedByDescending(byUpdated)
+                        if (kids.isNotEmpty()) {
+                            add(SessionListRow.Expander(sid, kids.size, sid in expanded, depth))
+                            if (sid in expanded) kids.forEach { emit(it, depth + 1) }
+                        }
+                    }
+                    roots.forEach { emit(it, 0) }
+                }
+            } else {
+                // "tümü/aktif/son 24s": düz liste; çocuklar bayrakla işaretlenir.
+                matching.filter { matchesFilter(it) }
+                    .map { SessionListRow.Item(it, if (it.str("parentID") != null) 1 else 0) }
             }
 
             when {
                 state.loading && state.sessions.isEmpty() ->
                     CircularProgressIndicator(color = Oc.accent, modifier = Modifier.align(Alignment.Center))
 
-                visible.isEmpty() ->
+                rows.isEmpty() ->
                     Text(
                         if (state.sessions.isEmpty()) {
                             "Session yok. Sağ alttaki + ile yeni bir tane açın."
@@ -423,21 +468,38 @@ fun SessionsScreen(
                     ),
                     verticalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
-                    items(visible, key = { it.str("id").orEmpty() }) { s ->
-                        SessionRow(
-                            id = s.str("id").orEmpty(),
-                            title = s.str("title")?.ifBlank { null } ?: "(başlıksız)",
-                            directory = s.obj("location").str("directory") ?: "?",
-                            updatedAt = s.obj("time").num("updated") ?: s.obj("time").num("created") ?: 0.0,
-                            cost = s.num("cost") ?: 0.0,
-                            busy = state.active.contains(s.str("id")),
-                            failed = s.str("outcome") == "failed",
-                            child = s.str("parentID") != null,
-                            onClick = { s.str("id")?.let(onOpen) },
-                            onDelete = onDelete,
-                            onRename = onRename,
-                            onFork = onFork,
-                        )
+                    items(rows, key = { row -> when (row) {
+                        is SessionListRow.Item -> row.obj.str("id").orEmpty()
+                        is SessionListRow.Expander -> "exp:" + row.parentID
+                    } }) { row ->
+                        when (row) {
+                            is SessionListRow.Item -> {
+                                val s = row.obj
+                                SessionRow(
+                                    id = s.str("id").orEmpty(),
+                                    title = s.str("title")?.ifBlank { null } ?: "(başlıksız)",
+                                    directory = s.obj("location").str("directory") ?: "?",
+                                    updatedAt = s.obj("time").num("updated") ?: s.obj("time").num("created") ?: 0.0,
+                                    cost = s.num("cost") ?: 0.0,
+                                    busy = state.active.contains(s.str("id")),
+                                    failed = s.str("outcome") == "failed",
+                                    child = row.depth > 0,
+                                    indent = row.depth,
+                                    onClick = { s.str("id")?.let(onOpen) },
+                                    onDelete = onDelete,
+                                    onRename = onRename,
+                                    onFork = onFork,
+                                )
+                            }
+                            is SessionListRow.Expander -> ExpanderRow(
+                                count = row.count,
+                                expanded = row.expanded,
+                                depth = row.depth,
+                                onToggle = {
+                                    expanded = if (row.parentID in expanded) expanded - row.parentID else expanded + row.parentID
+                                },
+                            )
+                        }
                     }
                 }
             }
@@ -492,6 +554,26 @@ private fun FilterChipRow(filter: SessionFilter, selected: Boolean, onClick: () 
     )
 }
 
+@Composable
+private fun ExpanderRow(count: Int, expanded: Boolean, depth: Int, onToggle: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = (24 + 16 * depth).dp)
+            .clip(RoundedCornerShape(4.dp))
+            .background(Oc.panelAlt)
+            .clickable(onClick = onToggle)
+            .padding(horizontal = 10.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            (if (expanded) "▾ " else "▸ ") + "$count alt ajan",
+            color = Oc.purple,
+            style = MaterialTheme.typography.labelSmall,
+        )
+    }
+}
+
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun SessionRow(
@@ -503,6 +585,7 @@ private fun SessionRow(
     busy: Boolean,
     failed: Boolean,
     child: Boolean,
+    indent: Int = 0,
     onClick: () -> Unit,
     onDelete: (String) -> Unit,
     onRename: (String, String) -> Unit,
@@ -513,7 +596,7 @@ private fun SessionRow(
     var showDelete by remember { mutableStateOf(false) }
     val clipboard = LocalClipboardManager.current
 
-    Box(Modifier.fillMaxWidth()) {
+    Box(Modifier.fillMaxWidth().padding(start = (16 * indent).dp)) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
