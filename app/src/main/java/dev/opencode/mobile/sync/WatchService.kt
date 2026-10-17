@@ -64,13 +64,23 @@ class WatchService : Service() {
         super.onCreate()
         Notifier.init(this)
         // Hızlı başlangıç: servis hemen ön plana geçmeli.
-        val notification = Notifier.ongoing(this, FOREGROUND_ID, TITLE, "OpenCode — başlatılıyor…")
+        val notification =
+            Notifier.ongoing(this, FOREGROUND_ID, TITLE, "OpenCode — başlatılıyor…", action = stopAction())
         startForegroundCompat(notification)
         observeConnection()
         observeSettings()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        // Bildirimdeki "Durdur" düğmesi: arka plan bağlantısını kapat.
+        if (intent != null && intent.action == ACTION_STOP) {
+            scope.launch {
+                // Tercihi de kapat ki uygulama yeniden bağlanınca servis geri gelmesin.
+                runCatching { Settings(applicationContext).setBackgroundService(false) }
+                stopSelf()
+            }
+            return START_NOT_STICKY
+        }
         // Eylem düğmelerinden gelen izin yanıtlarını işle.
         if (intent != null && intent.action == ACTION_PERMISSION_REPLY) {
             val sid = intent.getStringExtra(EXTRA_SESSION_ID)
@@ -200,11 +210,19 @@ class WatchService : Service() {
                 if (rid != null) runCatching { Notifier.cancel(this, rid.hashCode()) }
             }
             "form.created" -> if (notifyForms && !AppVisibility.visible) notifyForm(d, sid)
+            // Soru başka yerde (CLI/uygulama) yanıtlandı ya da iptal edildi → bildirimi kaldır.
+            "form.replied", "form.cancelled" -> {
+                val fid = d.str("id") ?: d.obj("form").str("id")
+                if (fid != null) runCatching { Notifier.cancel(this, fid.hashCode()) }
+            }
             // 2.x (2.0.26) başarıyla bitiş: execution.succeeded (idle eski sürümler için).
             "session.idle", "session.execution.succeeded" ->
                 if (notifyWork && !AppVisibility.visible) notifyFinished(sid, ok = true)
             "session.execution.failed" -> if (notifyWork && !AppVisibility.visible) notifyFinished(sid, ok = false)
-            // session.execution.started: BİLDİRME (gürültü).
+            // Oturum yeniden çalışmaya başladı ya da başka yerde açıldı → "bitti"
+            // bildirimi artık bayat; kaldır (kullanıcı CLI'da açmış olabilir).
+            "session.execution.started", "session.viewed" ->
+                if (sid != null) runCatching { Notifier.cancel(this, sid.hashCode()) }
             else -> Unit
         }
     }
@@ -297,7 +315,19 @@ class WatchService : Service() {
 
     /** Sürekli durum bildirimini (aynı id) günceller. */
     private fun setStatus(text: String) {
-        runCatching { Notifier.ongoing(this, FOREGROUND_ID, TITLE, text) }
+        runCatching { Notifier.ongoing(this, FOREGROUND_ID, TITLE, text, action = stopAction()) }
+    }
+
+    /** Sürekli bildirimdeki "Durdur" düğmesi: arka plan bağlantısını kapatır. */
+    private fun stopAction(): NotificationCompat.Action {
+        val intent = Intent(this, WatchService::class.java).apply { action = ACTION_STOP }
+        val pending = PendingIntent.getService(
+            this,
+            ACTION_STOP.hashCode(),
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+        return NotificationCompat.Action(0, "Durdur", pending)
     }
 
     /** SDK sürümüne göre tipli/tipsiz `startForeground`. */
@@ -314,6 +344,7 @@ class WatchService : Service() {
         private const val TITLE = "OpenCode"
 
         private const val ACTION_PERMISSION_REPLY = "dev.opencode.mobile.action.PERMISSION_REPLY"
+        private const val ACTION_STOP = "dev.opencode.mobile.action.STOP"
         private const val EXTRA_ACTION = "action"
         private const val EXTRA_SESSION_ID = "sessionID"
         private const val EXTRA_REQUEST_ID = "requestID"

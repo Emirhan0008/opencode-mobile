@@ -781,6 +781,15 @@ class AppViewModel(
                         forms = forms,
                     )
                 }
+                // Oturum uygulamada açıldı: bu oturuma ait bayat bildirimleri kaldır
+                // (görev bitişi + bekleyen izin/soru bildirimleri artık gereksiz).
+                runCatching { Notifier.cancel(appContext, id.hashCode()) }
+                perms.forEach { p ->
+                    p.str("id")?.let { pid -> runCatching { Notifier.cancel(appContext, pid.hashCode()) } }
+                }
+                forms.forEach { f ->
+                    f.str("id")?.let { fid -> runCatching { Notifier.cancel(appContext, fid.hashCode()) } }
+                }
             } catch (e: Exception) {
                 _session.update { it.copy(loading = false, error = e.message) }
             }

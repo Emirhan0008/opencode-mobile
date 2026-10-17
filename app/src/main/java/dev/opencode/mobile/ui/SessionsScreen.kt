@@ -170,25 +170,41 @@ fun SessionsScreen(
                     Spacer(Modifier.weight(1f))
                     if (permissionCount > 0) {
                         Text("🔐 $permissionCount", color = Oc.warn, style = MaterialTheme.typography.labelLarge)
-                        Spacer(Modifier.width(8.dp))
+                        Spacer(Modifier.width(6.dp))
                     }
-                    IconButton(onClick = onOpenSettings) {
+                    // Kompakt başlık eylemleri (IconButton 48dp yerine ~34dp) — "çıkış" tek satıra sığsın.
+                    BarAction(onClick = onOpenSettings) {
                         Text("⚙", style = MaterialTheme.typography.labelLarge)
                     }
-                    IconButton(onClick = onToggleTheme) {
+                    BarAction(onClick = onToggleTheme) {
                         Text(if (darkTheme) "☀" else "☾", style = MaterialTheme.typography.labelLarge)
                     }
-                    IconButton(onClick = { showShutdown = true }) {
+                    BarAction(onClick = { showShutdown = true }) {
                         Icon(
                             painterResource(R.drawable.ic_power),
                             contentDescription = "kapatma planı",
                             tint = if (shutdownArmed) Oc.warn else Oc.dim,
                         )
                     }
-                    IconButton(onClick = onRefresh) {
+                    BarAction(onClick = onRefresh) {
                         Icon(Icons.Default.Refresh, contentDescription = "yenile", tint = Oc.accent)
                     }
-                    TextButton(onClick = onDisconnect) { Text("çıkış", color = Oc.dim) }
+                    Box(
+                        modifier = Modifier
+                            .padding(start = 6.dp)
+                            .clip(RoundedCornerShape(4.dp))
+                            .border(1.dp, Oc.border, RoundedCornerShape(4.dp))
+                            .clickable(onClick = onDisconnect)
+                            .padding(horizontal = 8.dp, vertical = 5.dp),
+                    ) {
+                        Text(
+                            "çıkış",
+                            color = Oc.dim,
+                            maxLines = 1,
+                            softWrap = false,
+                            style = MaterialTheme.typography.labelMedium,
+                        )
+                    }
                 }
 
                 // ------------------------------------------------ bağlantı durumu
@@ -552,6 +568,18 @@ private fun FilterChipRow(filter: SessionFilter, selected: Boolean, onClick: () 
             .clickable(onClick = onClick)
             .padding(horizontal = 10.dp, vertical = 4.dp),
     )
+}
+
+/** Üst bar için kompakt eylem düğmesi (IconButton 48dp yerine ~34dp). */
+@Composable
+private fun BarAction(onClick: () -> Unit, content: @Composable () -> Unit) {
+    Box(
+        modifier = Modifier
+            .clip(RoundedCornerShape(4.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 6.dp, vertical = 6.dp),
+        contentAlignment = Alignment.Center,
+    ) { content() }
 }
 
 @Composable

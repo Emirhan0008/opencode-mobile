@@ -96,7 +96,8 @@ object Notifier {
     /**
      * Sürekli durum bildirimi (ön plan servisi): `setOngoing(true)`, otomatik iptal yok.
      * Aynı id ile çağrıldıkça günceller ve oluşturulan bildirimi döndürür
-     * (startForeground'a vermek için).
+     * (startForeground'a vermek için). [action] verilirse (ör. "Durdur") bildirime
+     * bir eylem düğmesi eklenir — kullanıcı sürekli bildirimi buradan kapatabilir.
      */
     fun ongoing(
         context: Context,
@@ -104,9 +105,10 @@ object Notifier {
         title: String,
         text: String,
         sessionId: String? = null,
+        action: NotificationCompat.Action? = null,
     ): Notification {
         init(context)
-        val notification = NotificationCompat.Builder(context, CHANNEL_STATUS)
+        val builder = NotificationCompat.Builder(context, CHANNEL_STATUS)
             .setSmallIcon(dev.opencode.mobile.R.drawable.ic_stat_phone)
             .setContentTitle(title)
             .setContentText(text)
@@ -114,7 +116,8 @@ object Notifier {
             .setAutoCancel(false)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .setContentIntent(contentIntent(context, id, sessionId))
-            .build()
+        if (action != null) builder.addAction(action)
+        val notification = builder.build()
         val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         manager.notify(id, notification)
         return notification
