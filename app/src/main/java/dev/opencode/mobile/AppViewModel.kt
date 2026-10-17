@@ -518,7 +518,8 @@ class AppViewModel(
 
     private fun handleEvent(ev: OcEvent) {
         val d = ev.data
-        val sid = d.str("sessionID")
+        // Bazı olaylar oturum kimliğini sarmalı taşır: form.created → {form:{sessionID,…,fields}}.
+        val sid = d.str("sessionID") ?: d.obj("form").str("sessionID") ?: d.obj("request").str("sessionID")
 
         when (ev.type) {
             "session.execution.started" -> {
