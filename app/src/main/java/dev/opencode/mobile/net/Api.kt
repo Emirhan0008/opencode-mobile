@@ -40,6 +40,18 @@ class Api(baseUrl: String, private val token: String) {
         .pingInterval(30, TimeUnit.SECONDS)
         .build()
 
+    /**
+     * Kısa/tek seferlik HTTP çağrıları için zaman aşımlı istemci. SSE istemcisi
+     * sonsuz okuma ile yapılandırıldığından (yanıt vermeyen sunucuda çağrı asla
+     * dönmez); bu tür çağrılar ayrı zaman aşımına sahip olmalı.
+     */
+    private val shortClient by lazy {
+        client.newBuilder()
+            .readTimeout(20, TimeUnit.SECONDS)
+            .callTimeout(25, TimeUnit.SECONDS)
+            .build()
+    }
+
     // ----------------------------------------------------------------- generic
 
     private fun builder(path: String): Request.Builder =
@@ -66,8 +78,8 @@ class Api(baseUrl: String, private val token: String) {
         execute(builder(path).patch(payload).build())
     }
 
-    private fun execute(request: Request): JsonElement {
-        client.newCall(request).execute().use { res ->
+    private fun execute(request: Request, on: OkHttpClient = client): JsonElement {
+        on.newCall(request).execute().use { res ->
             val text = res.body?.string().orEmpty()
             if (!res.isSuccessful) throw ApiException(res.code, text.take(300))
             return if (text.isBlank()) JsonNull else json.parseToJsonElement(text)
@@ -162,6 +174,20 @@ class Api(baseUrl: String, private val token: String) {
 
     suspend fun models(): List<JsonObject> =
         get("/api/model").obj().arr("data").map { it.obj() }
+
+    /**
+     * Evren kotası: model `settings` alanındaki [baseUrl] + [apiKey] ile
+     * `GET {baseUrl}/quota` çağrısı. `builder()` KULLANILMAZ (Basic auth + base
+     * ekler); bunun yerine doğrudan `Bearer` başlığı kurulur.
+     */
+    suspend fun quota(baseUrl: String, apiKey: String): JsonObject = withContext(Dispatchers.IO) {
+        val req = Request.Builder()
+            .url(baseUrl.trimEnd('/') + "/quota")
+            .header("Authorization", "Bearer $apiKey")
+            .header("Accept", "application/json")
+            .get().build()
+        execute(req, shortClient).obj()
+    }
 
     /** Oturumun ajanını (build / plan / özel) değiştirir. */
     suspend fun switchAgent(id: String, agent: String): JsonElement =

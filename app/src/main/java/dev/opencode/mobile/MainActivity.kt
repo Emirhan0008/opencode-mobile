@@ -111,6 +111,10 @@ private fun Root(
     val notifyPermissions by vm.notifyPermissions.collectAsState()
     val notifyForms by vm.notifyForms.collectAsState()
     val notifyWork by vm.notifyWork.collectAsState()
+    val quota by vm.quota.collectAsState()
+    val quotaError by vm.quotaError.collectAsState()
+    val quotaLoading by vm.quotaLoading.collectAsState()
+    val quotaBadge by vm.quotaBadge.collectAsState()
     var connectError by remember { mutableStateOf<String?>(null) }
     var connecting by remember { mutableStateOf(false) }
 
@@ -193,6 +197,11 @@ private fun Root(
             onRemoveQueued = vm::removeFromQueue,
             onFlushQueue = vm::flushQueue,
             onOpenSettings = vm::openSettings,
+            quota = quota,
+            quotaError = quotaError,
+            quotaLoading = quotaLoading,
+            quotaBadge = quotaBadge,
+            onRefreshQuota = { vm.refreshQuota() },
         )
 
         Screen.Settings -> SettingsScreen(
@@ -200,11 +209,13 @@ private fun Root(
             notifyPermissions = notifyPermissions,
             notifyForms = notifyForms,
             notifyWork = notifyWork,
+            quotaBadge = quotaBadge,
             darkTheme = dark,
             onToggleBackground = vm::setBackgroundService,
             onTogglePermissions = vm::setNotifyPermissions,
             onToggleForms = vm::setNotifyForms,
             onToggleWork = vm::setNotifyWork,
+            onToggleQuotaBadge = { vm.setQuotaBadge(it) },
             onToggleTheme = { vm.setDarkTheme(!dark) },
             onBack = vm::closeSettings,
         )

@@ -46,11 +46,13 @@ fun SettingsScreen(
     notifyPermissions: Boolean,
     notifyForms: Boolean,
     notifyWork: Boolean,
+    quotaBadge: Boolean,
     darkTheme: Boolean,
     onToggleBackground: (Boolean) -> Unit,
     onTogglePermissions: (Boolean) -> Unit,
     onToggleForms: (Boolean) -> Unit,
     onToggleWork: (Boolean) -> Unit,
+    onToggleQuotaBadge: (Boolean) -> Unit,
     onToggleTheme: (Boolean) -> Unit,
     onBack: () -> Unit,
 ) {
@@ -130,6 +132,12 @@ fun SettingsScreen(
                     checked = darkTheme,
                     enabled = true,
                     onCheckedChange = onToggleTheme,
+                )
+                SettingsSwitchRow(
+                    title = "Kota rozeti",
+                    checked = quotaBadge,
+                    enabled = true,
+                    onCheckedChange = onToggleQuotaBadge,
                 )
             }
         }

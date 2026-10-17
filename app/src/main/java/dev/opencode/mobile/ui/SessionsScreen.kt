@@ -87,6 +87,13 @@ fun SessionsScreen(
     permissionCount: Int,
     darkTheme: Boolean,
     onToggleTheme: () -> Unit,
+    /** Evren kota yanıtı (yoksa şerit gösterilmez). */
+    quota: JsonObject? = null,
+    quotaError: Boolean = false,
+    quotaLoading: Boolean = false,
+    /** Kota şeridi açık mı (ayarlardan kapatılabilir). */
+    quotaBadge: Boolean = true,
+    onRefreshQuota: () -> Unit = {},
     /** Üst bardaki ⚙ — ayarlar ekranını açar. */
     onOpenSettings: () -> Unit = {},
     onRefresh: () -> Unit,
@@ -215,6 +222,46 @@ fun SessionsScreen(
                                 style = MaterialTheme.typography.labelSmall,
                             )
                         }
+                    }
+                }
+
+                // ---------------------------------------------------- kota şeridi
+                // Yalnızca rozet açıkken ve gösterilecek bir şey varsa çizilir.
+                if (quotaBadge && (quota != null || quotaError || quotaLoading)) {
+                    val (label, color) = when {
+                        quota != null -> {
+                            val remaining = quota.num("daily_remaining_tokens")?.toLong() ?: 0L
+                            val limit = quota.num("daily_limit_tokens")?.toLong() ?: 0L
+                            val pct = if (limit > 0) remaining.toDouble() / limit * 100.0 else 0.0
+                            val credit = formatCredit(quota.str("remaining_cr"))
+                            val reset = formatReset(quota.str("daily_reset_at"))
+                            val c = when (quota.str("level")) {
+                                "ok" -> Oc.accent
+                                "warn" -> Oc.warn
+                                else -> Oc.err
+                            }
+                            val text = "⚡ kota ${formatTokens(remaining)}/${formatTokens(limit)} krk " +
+                                "(%${"%.0f".format(pct)}) · $credit kr · ⟳ $reset"
+                            text to c
+                        }
+                        quotaLoading -> "⚡ kota yükleniyor…" to Oc.dim
+                        else -> "⚡ kota alınamadı · dokun ve yeniden dene" to Oc.dim
+                    }
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(Oc.panelAlt)
+                            .clickable(onClick = onRefreshQuota)
+                            .padding(horizontal = 12.dp, vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            label,
+                            color = color,
+                            style = MaterialTheme.typography.labelSmall,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
                     }
                 }
 
@@ -903,4 +950,31 @@ fun formatElapsed(seconds: Long): String {
     val hours = minutes / 60
     if (hours < 24) return "$hours sa"
     return "${hours / 24} gün"
+}
+
+/** Token sayısını kısa biçime çevirir: 148000 -> "148k", 14800000 -> "14,8M". */
+private fun formatTokens(n: Long): String = when {
+    n >= 1_000_000 -> trimDecimal(n / 1_000_000.0) + "M"
+    n >= 1_000 -> trimDecimal(n / 1_000.0) + "k"
+    else -> n.toString()
+}
+
+/** Ondalığı virgülle yazar, gereksiz ",0" kuyruğunu atar. */
+private fun trimDecimal(v: Double): String =
+    "%.1f".format(v).replace('.', ',').removeSuffix(",0")
+
+/** Ham kredi metnini ("1010.0000") iki ondalıklı Türkçe biçime çevirir ("1010,00"). */
+private fun formatCredit(raw: String?): String {
+    val v = raw?.toDoubleOrNull() ?: return "?"
+    return "%.2f".format(v).replace('.', ',')
+}
+
+/** ISO 8601 zamanı yerel saatle "dd.MM HH:mm" biçimine çevirir (bilinmiyorsa "?"). */
+private fun formatReset(iso: String?): String {
+    if (iso.isNullOrBlank()) return "?"
+    return runCatching {
+        java.time.Instant.parse(iso)
+            .atZone(java.time.ZoneId.systemDefault())
+            .format(java.time.format.DateTimeFormatter.ofPattern("dd.MM HH:mm"))
+    }.getOrDefault("?")
 }

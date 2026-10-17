@@ -182,6 +182,18 @@ class AppViewModel(
     private val _models = MutableStateFlow<List<JsonObject>>(emptyList())
     val models: StateFlow<List<JsonObject>> = _models.asStateFlow()
 
+    /** Evren kotası yanıtı (yoksa null — şerit gösterilmez). */
+    private val _quota = MutableStateFlow<JsonObject?>(null)
+    val quota: StateFlow<JsonObject?> = _quota.asStateFlow()
+
+    /** Kota sorgusu başarısız mı (şeritte "alınamadı" göstergesi). */
+    private val _quotaError = MutableStateFlow(false)
+    val quotaError: StateFlow<Boolean> = _quotaError.asStateFlow()
+
+    /** Kota sorgusu sürüyor mu. */
+    private val _quotaLoading = MutableStateFlow(false)
+    val quotaLoading: StateFlow<Boolean> = _quotaLoading.asStateFlow()
+
     private val _commands = MutableStateFlow<List<JsonObject>>(emptyList())
     val commands: StateFlow<List<JsonObject>> = _commands.asStateFlow()
 
@@ -203,6 +215,10 @@ class AppViewModel(
     /** Görev bitişi bildirimleri açık mı. */
     private val _notifyWork = MutableStateFlow(true)
     val notifyWork: StateFlow<Boolean> = _notifyWork.asStateFlow()
+
+    /** Evren kota şeridi açık mı. */
+    private val _quotaBadge = MutableStateFlow(true)
+    val quotaBadge: StateFlow<Boolean> = _quotaBadge.asStateFlow()
 
     /**
      * Gönderilmiş kapatma görevi:
@@ -262,6 +278,9 @@ class AppViewModel(
         }
         viewModelScope.launch {
             settings.notifyWork.collect { _notifyWork.value = it }
+        }
+        viewModelScope.launch {
+            settings.quotaBadge.collect { _quotaBadge.value = it }
         }
         viewModelScope.launch {
             settings.shutdownPlan.collect { plan ->
@@ -417,6 +436,13 @@ class AppViewModel(
         viewModelScope.launch { settings.setNotifyWork(enabled) }
     }
 
+    fun setQuotaBadge(enabled: Boolean) {
+        _quotaBadge.value = enabled
+        viewModelScope.launch { settings.setQuotaBadge(enabled) }
+        // Şerit ilk kez açılıyorsa veriyi hemen getir.
+        if (enabled) refreshQuota()
+    }
+
     /** Ayarlar ekranını açar. */
     fun openSettings() {
         _screen.value = Screen.Settings
@@ -450,6 +476,7 @@ class AppViewModel(
                     refreshSessions()
                     refreshMessages()
                     refreshPermissions()
+                    refreshQuota()
                     flushQueue()
                 }
             },
@@ -1127,7 +1154,47 @@ ve tek satır yaz: "kapatma görevi iptal edildi".
     private fun refreshModels() {
         val current = api ?: return
         viewModelScope.launch {
-            runCatching { current.models() }.onSuccess { list -> _models.value = list }
+            runCatching { current.models() }.onSuccess { list ->
+                _models.value = list
+                refreshQuota()
+            }
+        }
+    }
+
+    /**
+     * Evren kotasını tazeler. `GET /api/model` yanıtındaki evren modelinin `settings`
+     * alanındaki baseURL + apiKey ile `GET {baseURL}/quota` çağrılır. Evren sağlayıcısı
+     * yoksa (baseURL/apiKey boş) bayat veri temizlenir ve şerit gizlenir.
+     */
+    fun refreshQuota() {
+        val current = api
+        val model = _models.value.firstOrNull { it.str("providerID") == "evren" }
+            ?: _models.value.firstOrNull {
+                it.obj("settings").str("baseURL")?.contains("evren", ignoreCase = true) == true
+            }
+        val cfg = model?.obj("settings")
+        val base = cfg?.str("baseURL")?.takeIf { it.isNotBlank() }
+        val key = cfg?.str("apiKey")?.takeIf { it.isNotBlank() }
+        if (current == null || base == null || key == null) {
+            // Evren sağlayıcısı yok: önceki sunucudan kalan bayat veriyi temizle.
+            _quota.value = null
+            _quotaError.value = false
+            _quotaLoading.value = false
+            return
+        }
+        viewModelScope.launch {
+            _quotaLoading.value = true
+            runCatching { current.quota(base, key) }
+                .onSuccess {
+                    _quota.value = it
+                    _quotaError.value = false
+                }
+                .onFailure {
+                    // Başarısız çekimde eski değeri bırakma; hata durumu yüzeye çıksın.
+                    _quota.value = null
+                    _quotaError.value = true
+                }
+            _quotaLoading.value = false
         }
     }
 

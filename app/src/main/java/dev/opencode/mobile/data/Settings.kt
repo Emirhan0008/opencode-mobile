@@ -37,6 +37,7 @@ class Settings(private val context: Context) {
     private val keyNotifyPermissions = booleanPreferencesKey("notify_permissions")
     private val keyNotifyForms = booleanPreferencesKey("notify_forms")
     private val keyNotifyWork = booleanPreferencesKey("notify_work")
+    private val keyQuotaBadge = booleanPreferencesKey("quota_badge")
     private val keyProfiles = stringPreferencesKey("profiles")
     private val keyActiveProfile = stringPreferencesKey("active_profile")
     private val keyQueue = stringPreferencesKey("queue")
@@ -103,6 +104,10 @@ class Settings(private val context: Context) {
     /** Görev tamamlandı/başarısız bildirimleri. */
     val notifyWork: Flow<Boolean> =
         context.dataStore.data.map { prefs -> prefs[keyNotifyWork] ?: true }
+
+    /** Evren kota şeridi gösterilsin mi. */
+    val quotaBadge: Flow<Boolean> =
+        context.dataStore.data.map { prefs -> prefs[keyQuotaBadge] ?: true }
 
     /** Çevrimdışı kuyruk (JSON listesi) — biçimini AppViewModel belirler. */
     val queue: Flow<String?> = context.dataStore.data.map { prefs -> prefs[keyQueue] }
@@ -186,6 +191,10 @@ class Settings(private val context: Context) {
 
     suspend fun setNotifyWork(enabled: Boolean) {
         context.dataStore.edit { prefs -> prefs[keyNotifyWork] = enabled }
+    }
+
+    suspend fun setQuotaBadge(enabled: Boolean) {
+        context.dataStore.edit { prefs -> prefs[keyQuotaBadge] = enabled }
     }
 
     suspend fun setShutdownPlan(plan: String?) {
