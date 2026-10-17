@@ -200,7 +200,9 @@ class WatchService : Service() {
                 if (rid != null) runCatching { Notifier.cancel(this, rid.hashCode()) }
             }
             "form.created" -> if (notifyForms && !AppVisibility.visible) notifyForm(d, sid)
-            "session.idle" -> if (notifyWork && !AppVisibility.visible) notifyFinished(sid, ok = true)
+            // 2.x (2.0.26) başarıyla bitiş: execution.succeeded (idle eski sürümler için).
+            "session.idle", "session.execution.succeeded" ->
+                if (notifyWork && !AppVisibility.visible) notifyFinished(sid, ok = true)
             "session.execution.failed" -> if (notifyWork && !AppVisibility.visible) notifyFinished(sid, ok = false)
             // session.execution.started: BİLDİRME (gürültü).
             else -> Unit

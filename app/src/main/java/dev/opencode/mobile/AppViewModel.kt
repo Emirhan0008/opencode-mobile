@@ -529,8 +529,9 @@ class AppViewModel(
                 }
             }
 
-            // 2.x'te bitiş olayları: idle / failed (execution.succeeded yok)
-            "session.idle", "session.execution.failed" -> finishSession(sid)
+            // 2.x (2.0.26) bitiş olayları: execution.succeeded / execution.failed.
+            // session.idle eski sürümlerle geriye dönük uyumluluk için korunuyor.
+            "session.idle", "session.execution.succeeded", "session.execution.failed" -> finishSession(sid)
 
             "session.text.started" -> ensureLive(d)
 
