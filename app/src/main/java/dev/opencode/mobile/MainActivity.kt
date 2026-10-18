@@ -26,6 +26,7 @@ import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
+import dev.opencode.mobile.net.str
 import dev.opencode.mobile.ui.ConnectScreen
 import dev.opencode.mobile.ui.OpenCodeTheme
 import dev.opencode.mobile.ui.SessionScreen
@@ -101,6 +102,13 @@ private fun Root(
     val models by vm.models.collectAsState()
     val commands by vm.commands.collectAsState()
     val globalPermissions by vm.globalPermissions.collectAsState()
+    val globalForms by vm.globalForms.collectAsState()
+    // Yalnız listede görünen oturumlara ait bekleyen soruları say: silinmiş oturumların
+    // sunucuda kalan artık formları rozeti şişirmesin (rozet ↔ satır işareti tutarlı olsun).
+    val questionSessions = remember(globalForms, sessions.sessions) {
+        val ids = sessions.sessions.mapNotNull { it.str("id") }.toSet()
+        globalForms.mapNotNull { it.str("sessionID") }.filter { it in ids }.toSet()
+    }
     val shutdownPlan by vm.shutdownPlan.collectAsState()
     val watchStatus by vm.watchStatus.collectAsState()
     val profiles by vm.profiles.collectAsState()
@@ -174,6 +182,8 @@ private fun Root(
         Screen.Sessions -> SessionsScreen(
             state = sessions,
             permissionCount = globalPermissions.size,
+            questionCount = questionSessions.size,
+            questionSessions = questionSessions,
             darkTheme = dark,
             onToggleTheme = { vm.setDarkTheme(!dark) },
             onRefresh = vm::refreshSessions,

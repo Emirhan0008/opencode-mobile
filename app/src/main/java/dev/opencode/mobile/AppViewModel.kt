@@ -176,6 +176,10 @@ class AppViewModel(
     private val _globalPermissions = MutableStateFlow<List<JsonObject>>(emptyList())
     val globalPermissions: StateFlow<List<JsonObject>> = _globalPermissions.asStateFlow()
 
+    /** Tüm oturumlardaki bekleyen sorular (form). Ana ekran göstergesi için. */
+    private val _globalForms = MutableStateFlow<List<JsonObject>>(emptyList())
+    val globalForms: StateFlow<List<JsonObject>> = _globalForms.asStateFlow()
+
     private val _agents = MutableStateFlow<List<JsonObject>>(emptyList())
     val agents: StateFlow<List<JsonObject>> = _agents.asStateFlow()
 
@@ -468,17 +472,17 @@ class AppViewModel(
         val current = api ?: return
         sseCall = current.events(
             onOpen = {
-                val reconnected = sseAttempt > 0
                 sseAttempt = 0
                 _connState.value = ConnState.Connected
-                if (reconnected) {
-                    // Kopukluk sırasında kaçan güncellemeleri telafi et.
-                    refreshSessions()
-                    refreshMessages()
-                    refreshPermissions()
-                    refreshQuota()
-                    flushQueue()
-                }
+                // İLK bağlantıda da yükle: bekleyen izin/sorular ve mevcut ekran
+                // (soğuk açılışta bildirimden gelinip açılan oturum dahil). Aksi halde
+                // bunlar yalnızca canlı olayla geliyordu ve uygulama açılışında boştu.
+                refreshSessions()
+                refreshMessages()
+                refreshPermissions()
+                refreshForms()
+                refreshQuota()
+                flushQueue()
             },
             onEvent = ::handleEvent,
             onError = {
@@ -513,6 +517,14 @@ class AppViewModel(
                     _session.update { it.copy(permissions = list.filter { p -> p.str("sessionID") == id }) }
                 }
             }
+        }
+    }
+
+    /** Bekleyen formları tazeler (kopukluk telafisi + ana ekran "soru var" işareti). */
+    private fun refreshForms() {
+        val current = api ?: return
+        viewModelScope.launch {
+            runCatching { current.pendingForms() }.onSuccess { list -> _globalForms.value = list }
         }
     }
 
@@ -618,6 +630,8 @@ class AppViewModel(
             "form.created" -> {
                 val form = unwrap(d, "form")
                 val fid = form.str("id") ?: return
+                // Tüm oturumlar için global liste (ana ekranda "soru var" işareti).
+                _globalForms.update { list -> list.filterNot { it.str("id") == fid } + form }
                 if (sid == currentSessionId()) {
                     _session.update { st ->
                         st.copy(forms = st.forms.filterNot { it.str("id") == fid } + form)
@@ -628,6 +642,7 @@ class AppViewModel(
 
             "form.replied", "form.cancelled" -> {
                 val fid = d.str("id") ?: d.obj("form").str("id") ?: return
+                _globalForms.update { list -> list.filterNot { it.str("id") == fid } }
                 _session.update { st -> st.copy(forms = st.forms.filterNot { it.str("id") == fid }) }
             }
 

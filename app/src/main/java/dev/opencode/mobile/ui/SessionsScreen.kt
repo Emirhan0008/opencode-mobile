@@ -91,6 +91,10 @@ private sealed interface SessionListRow {
 fun SessionsScreen(
     state: SessionsState,
     permissionCount: Int,
+    /** Bekleyen soru (form) sayısı — başlıkta göstergesi. */
+    questionCount: Int = 0,
+    /** Bekleyen sorusu olan oturum kimlikleri — satırda işaret. */
+    questionSessions: Set<String> = emptySet(),
     darkTheme: Boolean,
     onToggleTheme: () -> Unit,
     /** Evren kota yanıtı (yoksa şerit gösterilmez). */
@@ -170,6 +174,10 @@ fun SessionsScreen(
                     Spacer(Modifier.weight(1f))
                     if (permissionCount > 0) {
                         Text("🔐 $permissionCount", color = Oc.warn, style = MaterialTheme.typography.labelLarge)
+                        Spacer(Modifier.width(6.dp))
+                    }
+                    if (questionCount > 0) {
+                        Text("❓ $questionCount", color = Oc.purple, style = MaterialTheme.typography.labelLarge)
                         Spacer(Modifier.width(6.dp))
                     }
                     // Kompakt başlık eylemleri (IconButton 48dp yerine ~34dp) — "çıkış" tek satıra sığsın.
@@ -500,6 +508,7 @@ fun SessionsScreen(
                                     busy = state.active.contains(s.str("id")),
                                     failed = s.str("outcome") == "failed",
                                     child = row.depth > 0,
+                                    hasQuestion = s.str("id")?.let { questionSessions.contains(it) } ?: false,
                                     indent = row.depth,
                                     onClick = { s.str("id")?.let(onOpen) },
                                     onDelete = onDelete,
@@ -613,6 +622,7 @@ private fun SessionRow(
     busy: Boolean,
     failed: Boolean,
     child: Boolean,
+    hasQuestion: Boolean = false,
     indent: Int = 0,
     onClick: () -> Unit,
     onDelete: (String) -> Unit,
@@ -663,6 +673,10 @@ private fun SessionRow(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
+            }
+            if (hasQuestion) {
+                Text("❓", color = Oc.purple, style = MaterialTheme.typography.labelLarge)
+                Spacer(Modifier.width(6.dp))
             }
             Text(
                 when {

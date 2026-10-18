@@ -111,9 +111,28 @@ fun SessionScreen(
     var dragX by remember { mutableStateOf(0f) }
     val swipeThreshold = with(LocalDensity.current) { 120.dp.toPx() }
 
-    LaunchedEffect(state.messages.size, state.live?.text?.length, state.forms.size) {
-        val count = state.forms.size + state.messages.size + (if (state.live != null) 1 else 0)
-        if (count > 0) listState.animateScrollToItem(count - 1)
+    // Listenin toplam öğe sayısı (formlar + izinler + mesajlar + canlı kart).
+    val itemCount = state.forms.size + state.permissions.size + state.messages.size +
+        (if (state.live != null) 1 else 0)
+
+    // Oturuma girince en yeni mesaja ANINDA in. (Önceden animate kullanılıyordu; canlı akış
+    // her karede anahtarı değiştirip animasyonu iptal ediyor, liste ilk mesajda kalıyordu.)
+    LaunchedEffect(state.session?.str("id"), state.loading) {
+        if (!state.loading && itemCount > 0) listState.scrollToItem(itemCount - 1)
+    }
+
+    // Yeni mesaj/form/izin geldiğinde: yalnızca kullanıcı zaten dipteyse yumuşak takip et.
+    LaunchedEffect(itemCount) {
+        if (itemCount == 0) return@LaunchedEffect
+        val lastVisible = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1
+        if (lastVisible >= itemCount - 3) listState.animateScrollToItem(itemCount - 1)
+    }
+
+    // Canlı yanıt büyürken kartı dipte tut (iptal olmasın diye anında, animasyonsuz).
+    LaunchedEffect(state.live?.text?.length) {
+        if (itemCount == 0) return@LaunchedEffect
+        val lastVisible = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1
+        if (lastVisible >= itemCount - 2) listState.scrollToItem(itemCount - 1)
     }
 
     Column(Modifier.fillMaxSize().background(Oc.bg)) {

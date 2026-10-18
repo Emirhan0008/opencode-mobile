@@ -101,14 +101,19 @@ class Api(baseUrl: String, private val token: String) {
         return post("/api/session", body).obj().obj("data")
     }
 
+    /**
+     * Görüntülenecek mesajlar: EN YENİ [limit] mesaj, eskiden yeniye sıralı.
+     * Sunucu `order=desc` ile en yeniyi başa verir; listede kronolojik dursun diye
+     * çevrilir. Aksi halde uzun oturumlarda yalnızca en eski 200 mesaj yüklenir,
+     * gerçek en yeni içerik hiç görünmezdi.
+     */
     suspend fun messages(id: String, limit: Int = 200): List<JsonObject> =
-        get("/api/session/$id/message?limit=$limit&order=asc").obj().arr("data").map { it.obj() }
+        get("/api/session/$id/message?limit=$limit&order=desc").obj().arr("data").map { it.obj() }.reversed()
 
     /**
-     * En yeni mesajlar başta olmak üzere dar pencere — durum sorguları için.
-     * Yoğun oturumlarda [messages] en eski 200 mesajla sınırlıdır; yeni kabuk
-     * çalışması pencereye hiç girmezdi (bayat plan temizliği bu yüzden sessiz
-     * başarısız oluyordu).
+     * En yeni mesajlar başta olmak üzere dar pencere — durum sorguları için
+     * (ör. bayat kapatma planı temizliği). [messages]'tan farklı olarak yalnız
+     * son [limit] mesajı, en yeniden eskiye sırada döner.
      */
     suspend fun messagesRecent(id: String, limit: Int = 30): List<JsonObject> =
         get("/api/session/$id/message?limit=$limit&order=desc").obj().arr("data").map { it.obj() }
@@ -222,6 +227,10 @@ class Api(baseUrl: String, private val token: String) {
     /** Formu (soruyu) iptal et — aracı da iptal eder. */
     suspend fun cancelForm(sessionID: String, formID: String): JsonElement =
         delete("/api/session/$sessionID/form/$formID")
+
+    /** Tüm konumlardaki bekleyen sorular (ana ekran "soru var" işareti). */
+    suspend fun pendingForms(): List<JsonObject> =
+        get("/api/form").obj().arr("data").map { it.obj() }
 
     // --------------------------------------------------------------------- SSE
 
