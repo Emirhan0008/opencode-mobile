@@ -51,6 +51,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -77,6 +78,7 @@ import dev.opencode.mobile.net.num
 import dev.opencode.mobile.net.obj
 import dev.opencode.mobile.net.str
 import dev.opencode.mobile.net.text
+import kotlinx.coroutines.delay
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -928,7 +930,23 @@ private fun ToolBlock(part: JsonObject) {
     val meta = state.obj("metadata")
     val exit = meta.num("exit")?.toInt()
     val truncated = meta.str("truncated") == "true"
-    val dur = durationOf(part.obj("time"))
+    val time = part.obj("time")
+    val created = time.num("created")?.toLong()
+    val completed = time.num("completed")?.toLong()
+    val clock = created
+    // Çalışan araçta geçen süreyi canlı göster (saniyede bir tazele); bitince toplam süre.
+    val now by produceState(initialValue = System.currentTimeMillis(), key1 = status, key2 = created) {
+        while (status == "running" && created != null && completed == null) {
+            value = System.currentTimeMillis()
+            delay(1000)
+        }
+    }
+    val dur: String? = when {
+        created == null -> null
+        completed != null && completed >= created -> fmtDuration(completed - created)
+        status == "running" -> fmtDuration((now - created).coerceAtLeast(0L))
+        else -> null
+    }
 
     Column(Modifier.fillMaxWidth()) {
         Row(
@@ -944,6 +962,10 @@ private fun ToolBlock(part: JsonObject) {
             Text("tool · $name", color = Oc.blue, style = MaterialTheme.typography.labelLarge)
             Spacer(Modifier.width(8.dp))
             Text(status, color = Oc.dim, style = MaterialTheme.typography.labelSmall)
+            clock?.let {
+                Spacer(Modifier.width(6.dp))
+                Text(clockOf(it), color = Oc.dim, style = MaterialTheme.typography.labelSmall)
+            }
             dur?.let {
                 Spacer(Modifier.width(6.dp))
                 Text(it, color = Oc.dim, style = MaterialTheme.typography.labelSmall)
@@ -965,16 +987,29 @@ private fun ToolBlock(part: JsonObject) {
     }
 }
 
-/** `time.created` → `time.completed` farkı; ikisi de varsa "3,2 sn" döner. */
-private fun durationOf(time: JsonObject): String? {
-    val created = time.num("created")?.toLong() ?: return null
-    val completed = time.num("completed")?.toLong() ?: return null
-    if (completed < created) return null
-    return fmtDuration(completed - created)
-}
+/** Epoch ms → "14:07" biçiminde duvar saati (yerel saat dilimi). */
+private fun clockOf(ms: Long): String =
+    java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault()).format(java.util.Date(ms))
 
 @Composable
 private fun LiveToolBlock(tool: ToolRow) {
+    // Çalışırken geçen süreyi canlı göster (saniyede bir tazele).
+    val now by produceState(
+        initialValue = System.currentTimeMillis(),
+        key1 = tool.status,
+        key2 = tool.startedAt,
+    ) {
+        while (tool.status == "running" && tool.startedAt > 0L) {
+            value = System.currentTimeMillis()
+            delay(1000)
+        }
+    }
+    val dur: String? = when {
+        tool.startedAt <= 0L -> null
+        tool.endedAt != null && tool.endedAt >= tool.startedAt -> fmtDuration(tool.endedAt - tool.startedAt)
+        tool.status == "running" -> fmtDuration((now - tool.startedAt).coerceAtLeast(0L))
+        else -> null
+    }
     Column(Modifier.fillMaxWidth()) {
         Row(
             Modifier
@@ -991,6 +1026,22 @@ private fun LiveToolBlock(tool: ToolRow) {
                 color = Oc.blue,
                 style = MaterialTheme.typography.labelLarge,
             )
+            if (tool.startedAt > 0L) {
+                Spacer(Modifier.width(6.dp))
+                Text(clockOf(tool.startedAt), color = Oc.dim, style = MaterialTheme.typography.labelSmall)
+            }
+            dur?.let {
+                Spacer(Modifier.width(6.dp))
+                Text(it, color = Oc.dim, style = MaterialTheme.typography.labelSmall)
+            }
+            if (tool.exit != null && tool.exit != 0) {
+                Spacer(Modifier.width(6.dp))
+                Text("exit ${tool.exit}", color = Oc.err, style = MaterialTheme.typography.labelSmall)
+            }
+            if (tool.truncated) {
+                Spacer(Modifier.width(6.dp))
+                Text("kesildi", color = Oc.warn, style = MaterialTheme.typography.labelSmall)
+            }
         }
         ToolDetails(input = tool.input, output = tool.output, error = tool.error)
     }

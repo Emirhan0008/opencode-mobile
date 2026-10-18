@@ -46,6 +46,15 @@ data class ToolRow(
     val input: String = "",
     val output: String = "",
     val error: String = "",
+    /** Satırın belirdiği an (duvar saati, epoch ms). Olayda zaman olmadığı için
+     *  uygulama olayı aldığı anda damgalar. */
+    val startedAt: Long = 0L,
+    /** Araç tamamlandığında dolar; çalışırken null. */
+    val endedAt: Long? = null,
+    /** `metadata.exit` — sıfırdan farklıysa "exit N" gösterilir. */
+    val exit: Int? = null,
+    /** `metadata.truncated` — çıktı kısaltıldıysa "kesildi". */
+    val truncated: Boolean = false,
 )
 
 data class LiveMessage(
@@ -590,6 +599,7 @@ class AppViewModel(
                     it.copy(
                         name = d.str("name") ?: it.name,
                         status = "running",
+                        startedAt = if (it.startedAt == 0L) System.currentTimeMillis() else it.startedAt,
                         input = d.obj("input").toString().takeIf { s -> s != "{}" } ?: it.input,
                     )
                 }
@@ -600,15 +610,32 @@ class AppViewModel(
             "session.tool.success" -> {
                 if (sid != currentSessionId()) return
                 upsertTool(d) {
-                    it.copy(name = d.str("name") ?: it.name, status = "ok", output = toolContent(d) ?: it.output)
+                    val meta = d.obj("metadata")
+                    it.copy(
+                        name = d.str("name") ?: it.name,
+                        status = "ok",
+                        output = toolContent(d) ?: it.output,
+                        endedAt = System.currentTimeMillis(),
+                        exit = meta.num("exit")?.toInt(),
+                        truncated = meta.str("truncated") == "true",
+                    )
                 }
             }
 
             "session.tool.failed" -> {
                 if (sid != currentSessionId()) return
                 upsertTool(d) {
+                    val meta = d.obj("metadata")
                     val msg = d.obj("error").str("message") ?: d.str("error") ?: "hata"
-                    it.copy(name = d.str("name") ?: it.name, status = "error", error = msg, output = toolContent(d) ?: it.output)
+                    it.copy(
+                        name = d.str("name") ?: it.name,
+                        status = "error",
+                        error = msg,
+                        output = toolContent(d) ?: it.output,
+                        endedAt = System.currentTimeMillis(),
+                        exit = meta.num("exit")?.toInt(),
+                        truncated = meta.str("truncated") == "true",
+                    )
                 }
             }
 
@@ -679,7 +706,16 @@ class AppViewModel(
             if (idx >= 0) {
                 tools[idx] = change(tools[idx])
             } else {
-                tools.add(change(ToolRow(id = toolID, name = d.str("name") ?: "tool", status = "running")))
+                tools.add(
+                    change(
+                        ToolRow(
+                            id = toolID,
+                            name = d.str("name") ?: "tool",
+                            status = "running",
+                            startedAt = System.currentTimeMillis(),
+                        ),
+                    ),
+                )
             }
             st.copy(live = live.copy(tools = tools))
         }
