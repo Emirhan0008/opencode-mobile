@@ -20,8 +20,11 @@ import dev.opencode.mobile.net.text
 import dev.opencode.mobile.notify.Notifier
 import dev.opencode.mobile.sync.WatchService
 import java.io.IOException
+import java.util.concurrent.TimeUnit
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -34,8 +37,11 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.put
 import okhttp3.Call
+import okhttp3.OkHttpClient
+import okhttp3.Request
 
 // ------------------------------------------------------------------- state
 
@@ -62,6 +68,17 @@ data class LiveMessage(
     val reasoning: String = "",
     val text: String = "",
     val tools: List<ToolRow> = emptyList(),
+)
+
+/**
+ * Telegram köprüsünün `/health` yanıtı. Köprü bilgisayarda çalışır; uygulama
+ * yalnızca aynı ağdayken canlı durum alabilir. Yanıt sır içermez.
+ */
+data class TelegramStatus(
+    val username: String? = null,
+    val allowed: Int = 0,
+    val uptimeSeconds: Long = 0L,
+    val opencode: String? = null,
 )
 
 data class SessionsState(
@@ -124,6 +141,9 @@ sealed interface Screen {
     data object Connect : Screen
     data object Sessions : Screen
     data object Settings : Screen
+
+    /** Telegram yedek erişim ekranı. */
+    data object Telegram : Screen
     data class Session(val id: String) : Screen
 }
 
@@ -245,6 +265,22 @@ class AppViewModel(
     private val _watchStatus = MutableStateFlow<WatchStatus?>(null)
     val watchStatus: StateFlow<WatchStatus?> = _watchStatus.asStateFlow()
 
+    /** Telegram yedek erişim: bot kullanıcı adı + durum ucu + son sorgu sonucu. */
+    private val _telegramBot = MutableStateFlow("")
+    val telegramBot: StateFlow<String> = _telegramBot.asStateFlow()
+
+    private val _telegramStatusUrl = MutableStateFlow("")
+    val telegramStatusUrl: StateFlow<String> = _telegramStatusUrl.asStateFlow()
+
+    private val _telegramStatus = MutableStateFlow<TelegramStatus?>(null)
+    val telegramStatus: StateFlow<TelegramStatus?> = _telegramStatus.asStateFlow()
+
+    private val _telegramStatusError = MutableStateFlow<String?>(null)
+    val telegramStatusError: StateFlow<String?> = _telegramStatusError.asStateFlow()
+
+    private val _telegramChecking = MutableStateFlow(false)
+    val telegramChecking: StateFlow<Boolean> = _telegramChecking.asStateFlow()
+
     init {
         viewModelScope.launch {
             settings.connection.collect { conn ->
@@ -302,6 +338,12 @@ class AppViewModel(
                 // bayat banner temizliği. Bağlantı sonra kurulursa attach() tetikler.
                 if (plan != null && api != null) refreshShutdownStatus()
             }
+        }
+        viewModelScope.launch {
+            settings.telegramBot.collect { _telegramBot.value = it }
+        }
+        viewModelScope.launch {
+            settings.telegramStatusUrl.collect { _telegramStatusUrl.value = it }
         }
     }
 
@@ -464,6 +506,82 @@ class AppViewModel(
     /** Ayarlar ekranından oturumlar listesine döner. */
     fun closeSettings() {
         _screen.value = Screen.Sessions
+    }
+
+    // ------------------------------------------------------------- telegram
+
+    /** Telegram yedek erişim ekranını açar. */
+    fun openTelegram() {
+        _screen.value = Screen.Telegram
+    }
+
+    /** Telegram ekranından döner: bağlantı varsa oturumlara, yoksa connect ekranına. */
+    fun closeTelegram() {
+        _screen.value = if (api != null) Screen.Sessions else Screen.Connect
+    }
+
+    fun setTelegramBot(value: String) {
+        val clean = value.trim().removePrefix("@")
+        _telegramBot.value = clean
+        viewModelScope.launch { settings.setTelegramBot(clean) }
+    }
+
+    fun setTelegramStatusUrl(value: String) {
+        _telegramStatusUrl.value = value
+        viewModelScope.launch { settings.setTelegramStatusUrl(value) }
+    }
+
+    /**
+     * Köprünün `/health` ucunu sorgular. Adres boşsa kullanıcıya yol gösterir.
+     * Bu çağrı OpenCode API'sine değil, doğrudan köprünün yerel ucuna gider;
+     * bu yüzden ayrı ve kısa zaman aşımlı bir istemci kullanır.
+     */
+    fun checkTelegramStatus() {
+        val raw = _telegramStatusUrl.value.trim()
+        if (raw.isBlank()) {
+            _telegramStatus.value = null
+            _telegramStatusError.value =
+                "Durum adresi boş. Aynı ağdaysan örn. http://192.168.1.93:49375/health"
+            return
+        }
+        val url = if (raw.startsWith("http://") || raw.startsWith("https://")) raw else "http://$raw"
+        _telegramChecking.value = true
+        _telegramStatusError.value = null
+        viewModelScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                runCatching {
+                    val client = OkHttpClient.Builder()
+                        .connectTimeout(5, TimeUnit.SECONDS)
+                        .readTimeout(5, TimeUnit.SECONDS)
+                        .callTimeout(8, TimeUnit.SECONDS)
+                        .build()
+                    val req = Request.Builder()
+                        .url(url)
+                        .header("Accept", "application/json")
+                        .get()
+                        .build()
+                    client.newCall(req).execute().use { res ->
+                        val text = res.body?.string().orEmpty()
+                        if (!res.isSuccessful) throw IOException("HTTP ${res.code}")
+                        val root = Json.parseToJsonElement(text) as? JsonObject
+                            ?: throw IOException("geçersiz yanıt")
+                        val bot = root["bot"] as? JsonObject
+                        TelegramStatus(
+                            username = (bot?.get("username") as? JsonPrimitive)?.contentOrNull,
+                            allowed = (root["allowed"] as? JsonPrimitive)?.contentOrNull?.toIntOrNull() ?: 0,
+                            uptimeSeconds = (root["uptimeSeconds"] as? JsonPrimitive)?.contentOrNull?.toLongOrNull() ?: 0L,
+                            opencode = (root["opencode"] as? JsonPrimitive)?.contentOrNull,
+                        )
+                    }
+                }
+            }
+            result.onSuccess { _telegramStatus.value = it }
+                .onFailure { e ->
+                    _telegramStatus.value = null
+                    _telegramStatusError.value = e.message ?: "bağlanılamadı"
+                }
+            _telegramChecking.value = false
+        }
     }
 
     // ----------------------------------------------------------------- SSE

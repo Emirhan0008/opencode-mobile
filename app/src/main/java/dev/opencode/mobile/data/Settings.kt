@@ -41,6 +41,8 @@ class Settings(private val context: Context) {
     private val keyProfiles = stringPreferencesKey("profiles")
     private val keyActiveProfile = stringPreferencesKey("active_profile")
     private val keyQueue = stringPreferencesKey("queue")
+    private val keyTelegramBot = stringPreferencesKey("telegram_bot")
+    private val keyTelegramStatusUrl = stringPreferencesKey("telegram_status_url")
 
     private val json = Json { ignoreUnknownKeys = true }
 
@@ -111,6 +113,14 @@ class Settings(private val context: Context) {
 
     /** Çevrimdışı kuyruk (JSON listesi) — biçimini AppViewModel belirler. */
     val queue: Flow<String?> = context.dataStore.data.map { prefs -> prefs[keyQueue] }
+
+    /** Telegram botunun kullanıcı adı (`t.me/<ad>` yedek erişim linki için). */
+    val telegramBot: Flow<String> =
+        context.dataStore.data.map { prefs -> prefs[keyTelegramBot] ?: DEFAULT_TELEGRAM_BOT }
+
+    /** Telegram köprüsünün yerel durum ucu (örn. `http://192.168.1.93:49375/health`). */
+    val telegramStatusUrl: Flow<String> =
+        context.dataStore.data.map { prefs -> prefs[keyTelegramStatusUrl].orEmpty() }
 
     /** Eski kullanım: tek bağlantıyı kaydeder (profillerin dışında). */
     suspend fun save(baseUrl: String, token: String) {
@@ -210,6 +220,18 @@ class Settings(private val context: Context) {
         }
     }
 
+    /** Telegram bot kullanıcı adını kaydeder (başındaki `@` temizlenir). */
+    suspend fun setTelegramBot(value: String) {
+        context.dataStore.edit { prefs ->
+            prefs[keyTelegramBot] = value.trim().removePrefix("@")
+        }
+    }
+
+    /** Telegram durum ucu adresini kaydeder. */
+    suspend fun setTelegramStatusUrl(value: String) {
+        context.dataStore.edit { prefs -> prefs[keyTelegramStatusUrl] = value.trim() }
+    }
+
     private fun decodeProfiles(raw: String?): List<Profile> {
         if (raw.isNullOrBlank()) return emptyList()
         return runCatching {
@@ -238,5 +260,8 @@ class Settings(private val context: Context) {
     companion object {
         /** Eski tek-bağlantı (base_url+token) görünümünün profil kimliği. */
         const val LEGACY_ID = "legacy"
+
+        /** Kurulu Telegram köprüsünün botu — kullanıcı değiştirene kadar varsayılan. */
+        const val DEFAULT_TELEGRAM_BOT = "Opencode_0008_Bot"
     }
 }

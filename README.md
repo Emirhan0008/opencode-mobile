@@ -40,6 +40,9 @@ TUI estetiğinde: koyu zemin, monospace yazılar, kutulu paneller.
   doğrudan telefondan yanıtlanabilir.
 - **İzin onayları**: "İzin isteği" kartında *bir kez / her zaman / reddet* düğmeleri.
 - **Bildirimler**: uygulama arka plandayken izin isteği, soru ve görev bitişi bildirimleri.
+- **Telegram yedek erişim**: üst bardaki ✈ düğmesi Telegram köprüsünü açar; bot
+  kullanıcı adı + isteğe bağlı yerel durum kontrolü (`/health`) ve tek dokunuşla
+  `t.me` linki. Uygulama veya OpenTunnel kapalıyken Telegram'dan devam edilebilir.
 - **Tema**: koyu / açık tema anahtarı (kalıcı).
 
 ## Kimlik doğrulama
@@ -81,13 +84,42 @@ Erişim sunucu parolasıyla korunur; trafik uçtan uca şifrelidir.
 
 Parolayı değiştirmek için: `opencode service set password "uzun-bir-parola"`.
 
+## Telegram yedek erişim
+
+`telegram-bridge/` altındaki küçük Node/TypeScript köprüsü, OpenCode'u Telegram
+üzerinden kullanmayı sağlar: prompt gönderme, canlı yanıt, oturum listesi/seçimi,
+izin onayları ve bildirimler. **Mobil uygulama veya OpenTunnel çalışmasa bile**
+bilgisayar açık ve internete bağlı olduğu sürece bu yol çalışır — bu yüzden
+"yedek erişim"dir.
+
+Kurulum (bir kez):
+
+```powershell
+cd W:\opencode-mobile\telegram-bridge
+Copy-Item .env.example .env      # ilk kez
+notepad .env                     # TELEGRAM_BOT_TOKEN + TELEGRAM_ALLOWED_IDS
+npm install
+npm start
+```
+
+- Bot token'ı BotFather'dan (`/newbot`) alınır.
+- `TELEGRAM_ALLOWED_IDS` boşken bot **kimseye** izin vermez (fail-closed).
+  Botu başlatıp Telegram'da `/start` yazın; size ID'nizi söyler, `.env`'e ekleyin.
+- Köprü çalışırken `http://127.0.0.1:49375/health` durum ucunu açar (sır içermez).
+  Aynı ağdaki telefondan kontrol için `.env` içinde `TELEGRAM_STATUS_HOST=0.0.0.0`.
+- Uygulamada ✈ düğmesi → bot kullanıcı adını girin → **Telegram'da aç**.
+  Aynı ağdaysanız durum adresini girip **Durumu kontrol et** ile canlı durum alın.
+
+`.env` ve `node_modules/` git'e girmez (`telegram-bridge/.gitignore`).
+
 ## Mimari
 
 ```
-ui/            ConnectScreen, SessionsScreen, SessionScreen (Jetpack Compose)
+ui/            ConnectScreen, SessionsScreen, SessionScreen, TelegramScreen (Compose)
 net/Api.kt     HTTP API istemcisi + SSE olay akışı (OkHttp)
 data/          DataStore ile bağlantı ayarları
 AppViewModel   Durum yönetimi, canlı akış birleştirme
+telegram-bridge/  Node/TypeScript Telegram köprüsü (yedek erişim) + /health ucu
 ```
 
 OpenCode API'si hakkında: https://opencode.ai/v2/docs/api

@@ -32,6 +32,7 @@ import dev.opencode.mobile.ui.OpenCodeTheme
 import dev.opencode.mobile.ui.SessionScreen
 import dev.opencode.mobile.ui.SessionsScreen
 import dev.opencode.mobile.ui.SettingsScreen
+import dev.opencode.mobile.ui.TelegramScreen
 import dev.opencode.mobile.notify.Notifier
 
 class MainActivity : ComponentActivity() {
@@ -111,6 +112,11 @@ private fun Root(
     }
     val shutdownPlan by vm.shutdownPlan.collectAsState()
     val watchStatus by vm.watchStatus.collectAsState()
+    val telegramBot by vm.telegramBot.collectAsState()
+    val telegramStatusUrl by vm.telegramStatusUrl.collectAsState()
+    val telegramStatus by vm.telegramStatus.collectAsState()
+    val telegramStatusError by vm.telegramStatusError.collectAsState()
+    val telegramChecking by vm.telegramChecking.collectAsState()
     val profiles by vm.profiles.collectAsState()
     val activeProfileId by vm.activeProfileId.collectAsState()
     val connState by vm.connState.collectAsState()
@@ -140,6 +146,7 @@ private fun Root(
     BackHandler(enabled = screen !is Screen.Sessions) {
         when (screen) {
             Screen.Settings -> vm.closeSettings()
+            Screen.Telegram -> vm.closeTelegram()
             is Screen.Session -> vm.goBack()
             else -> Unit
         }
@@ -177,6 +184,7 @@ private fun Root(
                     connectError = err
                 }
             },
+            onOpenTelegram = vm::openTelegram,
         )
 
         Screen.Sessions -> SessionsScreen(
@@ -207,6 +215,7 @@ private fun Root(
             onRemoveQueued = vm::removeFromQueue,
             onFlushQueue = vm::flushQueue,
             onOpenSettings = vm::openSettings,
+            onOpenTelegram = vm::openTelegram,
             quota = quota,
             quotaError = quotaError,
             quotaLoading = quotaLoading,
@@ -227,7 +236,20 @@ private fun Root(
             onToggleWork = vm::setNotifyWork,
             onToggleQuotaBadge = { vm.setQuotaBadge(it) },
             onToggleTheme = { vm.setDarkTheme(!dark) },
+            onOpenTelegram = vm::openTelegram,
             onBack = vm::closeSettings,
+        )
+
+        Screen.Telegram -> TelegramScreen(
+            botUsername = telegramBot,
+            statusUrl = telegramStatusUrl,
+            status = telegramStatus,
+            error = telegramStatusError,
+            checking = telegramChecking,
+            onChangeBot = vm::setTelegramBot,
+            onChangeStatusUrl = vm::setTelegramStatusUrl,
+            onCheck = vm::checkTelegramStatus,
+            onBack = vm::closeTelegram,
         )
 
         is Screen.Session -> SessionScreen(

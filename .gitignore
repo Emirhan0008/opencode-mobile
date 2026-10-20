@@ -11,3 +11,8 @@ local.properties
 # APK
 *.apk
 *.aab
+
+# Telegram köprüsü (sırlar ve bağımlılıklar)
+telegram-bridge/.env
+telegram-bridge/node_modules/
+*.log

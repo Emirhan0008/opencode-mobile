@@ -3,6 +3,7 @@ package dev.opencode.mobile.ui
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -54,6 +55,7 @@ fun SettingsScreen(
     onToggleWork: (Boolean) -> Unit,
     onToggleQuotaBadge: (Boolean) -> Unit,
     onToggleTheme: (Boolean) -> Unit,
+    onOpenTelegram: () -> Unit = {},
     onBack: () -> Unit,
 ) {
     Column(Modifier.fillMaxSize().background(Oc.bg)) {
@@ -139,6 +141,32 @@ fun SettingsScreen(
                     enabled = true,
                     onCheckedChange = onToggleQuotaBadge,
                 )
+            }
+
+            SettingsSection("YEDEK ERİŞİM") {
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(4.dp))
+                        .clickable(onClick = onOpenTelegram)
+                        .padding(vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            "Telegram botu",
+                            color = Oc.text,
+                            style = MaterialTheme.typography.bodyLarge,
+                        )
+                        Text(
+                            "Uygulama veya tünel kapalıyken Telegram'dan devam et",
+                            color = Oc.dim,
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
+                    Spacer(Modifier.width(12.dp))
+                    Text("→", color = Oc.accent, style = MaterialTheme.typography.titleMedium)
+                }
             }
         }
     }

@@ -106,6 +106,8 @@ fun SessionsScreen(
     onRefreshQuota: () -> Unit = {},
     /** Üst bardaki ⚙ — ayarlar ekranını açar. */
     onOpenSettings: () -> Unit = {},
+    /** Üst bardaki ✈ — Telegram yedek erişim ekranını açar. */
+    onOpenTelegram: () -> Unit = {},
     onRefresh: () -> Unit,
     onOpen: (String) -> Unit,
     onNew: (title: String, directory: String) -> Unit,
@@ -181,6 +183,9 @@ fun SessionsScreen(
                         Spacer(Modifier.width(6.dp))
                     }
                     // Kompakt başlık eylemleri (IconButton 48dp yerine ~34dp) — "çıkış" tek satıra sığsın.
+                    BarAction(onClick = onOpenTelegram) {
+                        Text("✈", style = MaterialTheme.typography.labelLarge)
+                    }
                     BarAction(onClick = onOpenSettings) {
                         Text("⚙", style = MaterialTheme.typography.labelLarge)
                     }

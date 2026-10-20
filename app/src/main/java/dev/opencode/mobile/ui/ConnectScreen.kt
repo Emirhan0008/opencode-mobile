@@ -29,6 +29,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -60,6 +61,8 @@ fun ConnectScreen(
     onDeleteProfile: (String) -> Unit = {},
     onConnectCode: (baseUrl: String, codeOrUrl: String) -> Unit,
     onConnectPassword: (baseUrl: String, password: String) -> Unit,
+    /** Bağlantı yokken de Telegram yedek erişimine ulaşmak için. */
+    onOpenTelegram: () -> Unit = {},
 ) {
     var pairLink by remember { mutableStateOf("") }
     var manualUrl by remember { mutableStateOf("") }
@@ -237,6 +240,11 @@ fun ConnectScreen(
                 "Aynı Wi-Fi şart değil; bağlantı uçtan uca şifrelidir.",
             style = MaterialTheme.typography.bodySmall,
         )
+
+        HorizontalDivider(color = Oc.border)
+        TextButton(onClick = onOpenTelegram, modifier = Modifier.fillMaxWidth()) {
+            Text("✈ Telegram ile eriş (yedek)", color = Oc.accent)
+        }
     }
 }
 
