@@ -122,6 +122,8 @@ fun SessionsScreen(
     shutdownAt: String? = null,
     /** Kalıcı gözcü oturumu (varsa "otomatik" bunu kullanır). */
     shutdownSessionId: String? = null,
+    /** Gözcü oturumu yoksa oluşturur (diyalog açılınca çağrılır). */
+    onPrepareShutdownSession: () -> Unit = {},
     /** Gözcünün son canlılık durumu (bilinmiyorsa null). */
     watchStatus: WatchStatus? = null,
     onRefreshWatch: () -> Unit = {},
@@ -553,6 +555,7 @@ fun SessionsScreen(
                     watchStatus = watchStatus,
                     onRefreshWatch = onRefreshWatch,
                     shutdownSessionId = shutdownSessionId,
+                    onPrepareShutdownSession = onPrepareShutdownSession,
                     onArm = { force, targetId, at ->
                         showShutdown = false
                         onArmShutdown(force, targetId, at)
@@ -845,12 +848,14 @@ private fun ShutdownDialog(
     watchStatus: WatchStatus?,
     onRefreshWatch: () -> Unit,
     shutdownSessionId: String? = null,
+    onPrepareShutdownSession: () -> Unit = {},
     onArm: (force: Boolean, targetId: String?, at: String?) -> Unit,
     onCancel: () -> Unit,
     onDismiss: () -> Unit,
 ) {
     // Diyalog açıkken canlılığı ilk açılışta ve 30 sn'de bir otomatik yenile.
     LaunchedEffect(Unit) {
+        onPrepareShutdownSession()
         onRefreshWatch()
         while (true) {
             delay(30_000)

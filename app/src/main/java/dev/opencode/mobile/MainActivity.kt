@@ -210,6 +210,7 @@ private fun Root(
             shutdownAt = shutdownPlan?.split('|')?.getOrNull(2)?.takeIf { it != "-" },
             watchStatus = watchStatus,
             shutdownSessionId = shutdownSessionId,
+            onPrepareShutdownSession = { vm.prepareShutdownSession() },
             onRefreshWatch = vm::refreshShutdownStatus,
             connState = connState,
             onReconnect = vm::reconnectNow,
