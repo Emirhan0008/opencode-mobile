@@ -157,7 +157,7 @@ fun SettingsScreen(
             SettingsSection("SESLİ KOMUT") {
                 SettingsSwitchRow(
                     title = "Sesli komut",
-                    subtitle = "Ekran kilitliyken kulaklık tuşuyla konuş → teyit → oturum seç → yanıtı dinle",
+                    subtitle = "Bildirimdeki düğmelerle başlat; onay, oturum seçimi ve yanıt dinleme tamamen sesli",
                     checked = voiceEnabled,
                     enabled = true,
                     onCheckedChange = onToggleVoice,

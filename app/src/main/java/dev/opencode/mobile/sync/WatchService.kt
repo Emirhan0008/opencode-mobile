@@ -266,15 +266,25 @@ class WatchService : Service() {
             val parent = info?.str("parentID")
             if (!parent.isNullOrBlank()) return@launch   // alt ajan — sessiz
             val name = info?.str("title")?.takeIf { it.isNotBlank() } ?: sid.take(8)
-            val text = if (ok) "$name işi bitti" else "$name başarısız oldu"
+            val text = if (ok) "$name işi bitti — yanıtı sesli dinleyebilirsin" else "$name başarısız oldu"
             runCatching {
-                Notifier.notify(
-                    this@WatchService,
-                    sid.hashCode(),
-                    if (ok) "Görev tamamlandı" else "Görev başarısız",
-                    text,
-                    sessionId = sid,
-                )
+                if (ok) {
+                    Notifier.notifyTaskDone(
+                        this@WatchService,
+                        sid.hashCode(),
+                        "Görev tamamlandı",
+                        text,
+                        sid,
+                    )
+                } else {
+                    Notifier.notify(
+                        this@WatchService,
+                        sid.hashCode(),
+                        "Görev başarısız",
+                        text,
+                        sessionId = sid,
+                    )
+                }
             }
         }
     }

@@ -53,37 +53,58 @@ TUI estetiğinde: koyu zemin, monospace yazılar, kutulu paneller.
   `t.me` linki. Uygulama veya OpenTunnel kapalıyken Telegram'dan devam edilebilir.
 - **Tema**: koyu / açık tema anahtarı (kalıcı).
 
-## Sesli komut (ekran kilitli · Bluetooth kulaklık)
+## Sesli komut (ekran kilitli · tamamen konuşarak)
 
-Telefon cebinizdeyken ve ekran kilitliyken **kulaklığın orta tuşuyla** çalışır:
+Telefon cebinizdeyken ve ekran kilitliyken çalışır. Tetikleyici **bildirimdeki
+düğmelerdir** (kulaklık tuşu artık zorunlu değil; yedek olarak desteklenmeye devam eder):
 
-1. Tuşa bas → bip → konuş. Sessizlik algılanınca kayıt kendiliğinden biter.
+| Bildirim | Düğme | Ne yapar |
+|---|---|---|
+| Sürekli "OpenCode — sesli komut" | **Dinle** | Yeni sesli komut akışını başlatır |
+| | **Özet** | Son yanıtı (veya bildirimin taşıdığı oturumu) özetleyip okur |
+| | **Durdur** | Sesli komut servisini kapatır |
+| "Görev tamamlandı" | **Sesli dinle** | O oturumun son yanıtını özetleyip okur |
+| | **Yeni komut** | Sesli akışı başlatır |
+
+Akış (düğmeye bir kez dokunduktan sonra tamamen sesli):
+
+1. Bip → konuş. Sessizlik algılanınca kayıt kendiliğinden biter.
 2. Uygulama duyduğunu **sesli okur** ("Şunu mu söyledin: …") ve **kendiliğinden dinlemeye
-   geçer**. Tuşa basmak gerekmez: **"evet"** de (onayla/tamam/doğru da olur) ya da
-   **"hayır"** de (tekrar/yanlış) — yeniden söylemek için. "İptal" akışı bitirir.
+   geçer**. Onay için **"evet"** (onayla/tamam/doğru/olur/gönder…) ya da red için
+   **"hayır"** (yok/olmaz/tekrar/yanlış…) de. "İptal/vazgeç/dur" akışı bitirir.
 3. En yeni 5 üst düzey oturum sesli okunur, ardından mikrofon açılır; **numarayı söyle**
-   ("bir"…"beş"). Anlaşılmazsa bir kez daha sorar, yine olmazsa en yeni oturuma gider.
+   ("bir"…"beş"; "en yeni"/"son" = 1). "Tekrar oku" listeyi yeniden okur. Anlaşılmazsa
+   bir kez daha sorar, yine olmazsa en yeni oturuma gider.
 4. Prompt gönderilir, tur bitene kadar beklenir.
 5. Modelin **size yazdığı yanıt** (yalnızca `type=assistant` mesajın metin parçaları —
    kabuk/araç çıktıları, düşünme ve alt ajanlar hariç) kısa bir özete çevrilip sesli okunur.
+6. Okuma bitince mikrofon yeniden açılır ve **takip komutu** beklenir (en fazla 2 tur):
+   - **"tekrar oku" / "bir daha"** → son özeti yeniden okur (yeniden özetlemez),
+   - **"daha detaylı" / "ayrıntılı" / "uzun anlat"** → ayrıntılı özet ister,
+   - **"yeni komut" / "yeni istek" / "dinle"** → baştan yeni komut dinler,
+   - **"tamam" / "teşekkürler" / "yeter"** → akışı kapatır.
 
-Tuş yalnızca **başlatmak** için gerekir; onay ve oturum seçimi tamamen konuşarak yapılır.
-Konuşma sırasında tuş = sus; uzun bas = son yanıtı yeniden özetle.
+Sessizlikte akış sessizce kapanır; mikrofon açık kalmaz. Konuşma sırasında medya tuşu
+(veya bildirimdeki **Durdur**) okumayı keser.
 
-Medya tuşunun uygulamaya ulaşması için iki şey gerekir:
+### Yedek: kulaklık medya tuşu
 
-1. **Ses odağı** (`AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK`, `USAGE_ASSISTANT`) — alınmazsa
-   tuş başka uygulamaya/Google Asistan'a gider.
+Medya tuşu hâlâ dinlenir (`HEADSETHOOK` / `MEDIA_PLAY_PAUSE`): kısa bas = dinle,
+uzun bas = son yanıtı özetle. Tuşun uygulamaya ulaşması için iki şey gerekir:
+
+1. **Ses odağı** (`AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK`, `USAGE_ASSISTANT`).
 2. **Gerçek bir ses çalımı** — Android 13 `MediaSessionService`, medya tuşunu yalnızca
    "son ses çalan" uygulamalar arasından seçer (`getSortedAudioPlaybackClientUids`).
-   Servis açılışında ve ekran her kapandığında ~60 ms'lik **sessiz** bir PCM çalınır;
-   bu, oturumu medya tuşu oturumu yapar. Aksi hâlde oturum aktif ve odak sahibi olsa
-   bile tuş "son bilinen alıcıya" (YouTube/Spotify) gider — telefonda tam olarak bu
-   yaşandı.
+   Servis açılışında ve ekran her kapandığında ~60 ms'lik **sessiz** bir PCM çalınır.
+   Aksi hâlde oturum aktif ve odak sahibi olsa bile tuş "son bilinen alıcıya"
+   (YouTube/Spotify) gider — telefonda tam olarak bu yaşandı.
 
 Oturum ayrıca `setMediaButtonReceiver` ile kendi `VoiceButtonReceiver`'ını bildirir;
 sistem bunu `secure.media_button_receiver` ayarına yazar, böylece oturum seçilemese
-bile tuş yedeği bize döner.
+bile tuş yedeği bize döner. Aynı jest iki yoldan gelirse servis 400 ms içindeki
+ikinciyi yutar. Telefonun **varsayılan asistanı** kulaklık tuşuna atanmışsa
+(Ayarlar → Asistan ve ses → kulaklık tuşu) tek basış asistanı açabilir; bu durumda
+asistandan bu kısayolu kaldırın.
 
 Ses/LLM işleri **OpenCode'dan bağımsızdır**; OpenCode yalnızca prompt hedefi ve yanıt
 kaynağıdır. Tek sağlayıcı **EVREN** (`https://evren-llmapi.ssyz.org.tr`), üç ayrı ve
@@ -108,13 +129,6 @@ güvenilir çalışmadığı için sırayla kullanılır (`voice/AudioEngine.kt`
 ve `POST_NOTIFICATIONS` gerekir; anahtar açılınca uygulama bunları ister. MIUI/HyperOS'ta
 ayrıca **Otomatik başlatma** izni ve **pil kısıtlaması yok** ayarı önerilir.
 
-Tuş iki yoldan dinlenir: etkin `MediaSession` (`HEADSETHOOK` / `MEDIA_PLAY_PAUSE`) ve
-yedek olarak `ACTION_MEDIA_BUTTON` yayın alıcısı (`voice/VoiceButtonReceiver.kt`).
-Bazı OEM'ler tuşu oturuma değil yayına gönderir; aynı jest iki yoldan da gelirse
-servis 400 ms içindeki ikinciyi yutar. Telefonun **varsayılan asistanı** kulaklık
-tuşuna atanmışsa (Ayarlar → Asistan ve ses → kulaklık tuşu) tek basış asistanı
-açabilir; bu durumda asistandan bu kısayolu kaldırın veya uygulamayı asistan olarak
-seçmeyin.
 
 ## Kimlik doğrulama
 

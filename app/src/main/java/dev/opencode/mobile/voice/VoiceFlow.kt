@@ -21,6 +21,10 @@ import kotlinx.serialization.json.JsonObject
  *        → tur bitene kadar bekle → modelin YANITINI özetle → [OKU: özet]
  *
  * Sözler: evet/onayla/tamam · hayır/tekrar · iptal · bir…beş.
+ *
+ * Özet okunduktan sonra da dinlemeye devam edilir: "tekrar oku", "daha detaylı",
+ * "yeni komut", "tamam/iptal". Böylece telefon cebite girerken tek tetikle
+ * birden çok iş yapılabilir.
  */
 class VoiceFlow(
     private val context: Context,
@@ -36,6 +40,12 @@ class VoiceFlow(
 
     private var pendingText: String? = null
     private var targetSessionId: String? = null
+
+    /** Okunan son özet — "tekrar oku" için yeniden özetlemeden kullanılır. */
+    private var lastSummary: String? = null
+
+    /** Aynı yanıt için kaç kez takip komutu dinlendiği (sonsuz döngü koruması). */
+    private var followUps = 0
 
     /** TTS bittikten sonra mikrofonu açmadan önce beklenen süre (yankı önleme). */
     private suspend fun afterSpeechPause() = delay(500)
@@ -210,23 +220,87 @@ class VoiceFlow(
         }
     }
 
-    /** "evet/hayır" sınıflandırması. Belirsizse null. */
+    /**
+     * "Evet/hayır" sınıflandırması. Türkçe konuşmada sık geçen kısa onay ve
+     * ret sözlerinin tamamı tanınır. Belirsizse null.
+     */
     private fun parseYesNo(text: String): Boolean? {
-        val t = text.lowercase().trim()
+        val t = normalize(text)
         if (t.isEmpty()) return null
         // Olumsuzlar önce: "hayır" içinde "evet" yok ama "yok" gibi kısa sözler
         // başka kelimelerin içinde geçebilir, bu yüzden tam kelime aranır.
-        val no = listOf("hayır", "hayir", "yok", "olmaz", "yanlış", "yanlis", "tekrar", "değil", "degil", "iptal", "vazgeç", "vazgec")
-        val yes = listOf("evet", "onayla", "onay", "tamam", "doğru", "dogru", "olur", "gönder", "gonder", "kabul", "aynen", "peki")
-        fun has(words: List<String>) = words.any { w -> Regex("(^|\\s)${Regex.escape(w)}(\\s|$)").containsMatchIn(t) || t == w }
-        if (has(no)) return false
-        if (has(yes)) return true
+        if (hasAny(t, NO_WORDS)) return false
+        if (hasAny(t, YES_WORDS)) return true
         return null
     }
 
-    private fun parseCancel(text: String): Boolean {
-        val t = text.lowercase()
-        return listOf("iptal", "vazgeç", "vazgec", "boşver", "bosver").any { t.contains(it) }
+    private fun parseCancel(text: String): Boolean = hasAny(normalize(text), CANCEL_WORDS)
+
+    /** "tekrar oku / bir daha / yeniden" — son özeti tekrar ister. */
+    private fun parseRepeat(text: String): Boolean =
+        hasAny(normalize(text), REPEAT_WORDS) && !hasAny(normalize(text), CANCEL_WORDS)
+
+    /** "daha detaylı / uzun anlat / ayrıntılı" — ayrıntılı özet ister. */
+    private fun parseDetail(text: String): Boolean = hasAny(normalize(text), DETAIL_WORDS)
+
+    /** "yeni komut / yeni istek / başka bir şey" — yeni sesli komut başlatır. */
+    private fun parseNewCommand(text: String): Boolean = hasAny(normalize(text), NEW_WORDS)
+
+    /** "tamam / teşekkürler / yeter / dur" — iş bitti, akışı kapat. */
+    private fun parseDone(text: String): Boolean =
+        hasAny(normalize(text), DONE_WORDS) && !hasAny(normalize(text), DETAIL_WORDS)
+
+    /** Türkçe küçük harf + noktalama temizliği (STT virgül/nokta ekler). */
+    private fun normalize(text: String): String =
+        text.lowercase()
+            .replace('İ', 'i').replace('I', 'ı')
+            .replace(Regex("[.,!?;:\"'()\\[\\]]"), " ")
+            .replace(Regex("\\s+"), " ")
+            .trim()
+
+    /** Tam kelime eşleşmesi: "yok" → "yoktur" içinde sayılmaz. */
+    private fun hasAny(t: String, words: List<String>): Boolean =
+        words.any { w -> t == w || Regex("(^|\\s)${Regex.escape(w)}(\\s|$)").containsMatchIn(t) }
+
+    private companion object {
+        const val MAX_FOLLOW_UPS = 2
+
+        val YES_WORDS = listOf(
+            "evet", "evet efendim", "onayla", "onay", "onaylıyorum", "tamam", "tamamdır",
+            "doğru", "dogru", "doğrudur", "olur", "olsun", "gönder", "gonder", "gönderelim",
+            "gonderelim", "yolla", "yollayalım", "kabul", "kabul ediyorum", "aynen", "peki",
+            "tabii", "tabi", "elbette", "kesinlikle", "he", "hee", "hı hı", "ok", "okey",
+            "okay", "yes", "süper", "harika", "devam", "başla", "basla",
+        )
+        val NO_WORDS = listOf(
+            "hayır", "hayir", "yok", "yoktur", "olmaz", "olmasın", "yanlış", "yanlis",
+            "değil", "degil", "tekrar", "yeniden", "bir daha", "düzelt", "duzelt",
+            "sil", "temizle", "beğenmedim", "begenmedim", "no", "olmuyor",
+        )
+        val CANCEL_WORDS = listOf(
+            "iptal", "iptal et", "vazgeç", "vazgec", "boşver", "bosver", "dur", "dursun",
+            "sus", "kes", "çık", "cik", "bırak", "birak", "kapat", "kapatma", "hayır vazgeç",
+        )
+        val REPEAT_WORDS = listOf(
+            "tekrar", "tekrar oku", "bir daha", "yeniden", "yeniden oku", "bir daha oku",
+            "baştan", "bastan", "baştan oku", "anlamadım", "anlamadim", "duyamadım",
+            "duyamadim", "ne dedin", "tekrarla", "yinele",
+        )
+        val DETAIL_WORDS = listOf(
+            "detay", "detaylı", "detayli", "ayrıntı", "ayrinti", "ayrıntılı", "ayrintili",
+            "uzun", "uzunca", "açıkla", "acikla", "açıklar mısın", "geniş", "genis",
+            "daha fazla", "hepsini", "tamamını", "tamamen",
+        )
+        val NEW_WORDS = listOf(
+            "yeni komut", "yeni istek", "yeni görev", "yeni gorev", "başka bir şey",
+            "baska bir sey", "başka komut", "baska komut", "yeni mesaj", "yeniden dinle",
+            "dinle", "yeni soru",
+        )
+        val DONE_WORDS = listOf(
+            "tamam", "tamamdır", "tamamdir", "teşekkürler", "tesekkurler", "teşekkür",
+            "tesekkur", "yeter", "bitti", "bu kadar", "güle güle", "gorusuruz",
+            "görüşürüz", "kapat", "kapatabilirsin", "sus", "dur", "sağ ol", "sag ol",
+        )
     }
 
     /** Onaylandı → oturum sor. */
@@ -288,6 +362,15 @@ class VoiceFlow(
             return
         }
 
+        // "tekrar oku" → listeyi yeniden oku ve numarayı yine sor.
+        if (parseRepeat(answer) && attempt < 3) {
+            val titles = list.mapIndexed { i, s -> "${i + 1}. ${s.str("title")?.take(48) ?: "oturum"}" }
+            say("Oturumlar: ${titles.joinToString(". ")}. Hangisi?", ev)
+            afterSpeechPause()
+            listenForNumber(list, attempt + 1)
+            return
+        }
+
         val idx = parseOrdinal(answer)
         if (idx == null) {
             // Sessiz/anlaşılmaz: bir kez daha dinle, sonra en yeni oturuma düş.
@@ -309,17 +392,17 @@ class VoiceFlow(
         send(api, ev, chosen.str("id")!!, title)
     }
 
-    /** Türkçe sayı adlarını/rakamları 1..5'e çevirir. */
+    /** Türkçe sayı adlarını/rakamları 1..5'e çevirir ("en yeni"/"son" = 1). */
     private fun parseOrdinal(text: String): Int? {
-        val t = text.lowercase()
+        val t = normalize(text)
         val words = listOf(
-            1 to listOf("bir", "1", "birinci", "ilk"),
-            2 to listOf("iki", "2", "ikinci"),
-            3 to listOf("üç", "uc", "3", "üçüncü", "ucuncu"),
+            1 to listOf("bir", "1", "birinci", "ilk", "ilkini", "ilki", "en yeni", "son", "sonuncu", "en son"),
+            2 to listOf("iki", "2", "ikinci", "ikincisi", "ikisini"),
+            3 to listOf("üç", "uc", "3", "üçüncü", "ucuncu", "üçüncüsü"),
             4 to listOf("dört", "dort", "4", "dördüncü", "dorduncu"),
             5 to listOf("beş", "bes", "5", "beşinci", "besinci"),
         )
-        for ((n, keys) in words) if (keys.any { t.contains(it) }) return n
+        for ((n, keys) in words) if (hasAny(t, keys)) return n
         return null
     }
 
@@ -351,6 +434,7 @@ class VoiceFlow(
             onState("tur bitti")
             return
         }
+        followUps = 0
         speakSummary(api, ev, sessionId)
     }
 
@@ -404,19 +488,93 @@ class VoiceFlow(
             say("Özet çıkaramadım. Ham yanıtı okuyorum. ${answer.take(400)}", client)
             return
         }
+        lastSummary = summary
         stage = Stage.IDLE
         onState("özet: $summary")
         say(summary, client)
         stage = Stage.IDLE
+
+        // Okuma bitti: mikrofonu yeniden aç ve takip komutu bekle. Kullanıcı
+        // "tekrar oku", "daha detaylı", "yeni komut" ya da "tamam" diyebilir.
+        followUp(api, client, sessionId)
     }
 
-    /** Son oturumun yanıtını özetleyip okur (tuşla "özet" istendiğinde). */
-    suspend fun summarizeLast() {
+    /**
+     * Özet sonrası eller serbest takip komutları. Kullanıcı ekrana bakmadan
+     * zinciri sürdürebilsin diye en fazla [MAX_FOLLOW_UPS] kez dinlenir.
+     */
+    private suspend fun followUp(api: Api, ev: EvrenClient, sessionId: String) {
+        if (followUps >= MAX_FOLLOW_UPS) {
+            followUps = 0
+            return
+        }
+        followUps++
+        afterSpeechPause()
+        stage = Stage.LISTENING
+        audio.beep(start = true)
+        audio.openInputRoute()
+        val wav = try {
+            audio.record(maxMs = 7_000, silenceMs = 900, noSpeechMs = 5_000)
+        } finally {
+            audio.closeInputRoute()
+        }
+        audio.beep(start = false)
+
+        val answer = if (wav == null) "" else runCatching { ev.transcribe(wav) }.getOrDefault("")
+        if (answer.isBlank()) {
+            // Sessizlik: akışı sessizce kapat (kullanıcı artık iş yapmıyor).
+            followUps = 0
+            stage = Stage.IDLE
+            onState("hazır")
+            return
+        }
+        onState("takip: $answer")
+
+        when {
+            parseDetail(answer) -> {
+                say("Daha ayrıntılı okuyorum.", ev)
+                speakSummary(api, ev, sessionId, detail = true)
+            }
+            parseRepeat(answer) -> {
+                val again = lastSummary
+                if (again.isNullOrBlank()) speakSummary(api, ev, sessionId)
+                else {
+                    say(again, ev)
+                    followUp(api, ev, sessionId)
+                }
+            }
+            parseNewCommand(answer) -> {
+                followUps = 0
+                restartListening()
+            }
+            parseCancel(answer) || parseDone(answer) -> {
+                followUps = 0
+                stage = Stage.IDLE
+                say("Tamam, kapatıyorum.", ev)
+            }
+            parseYesNo(answer) == true -> {
+                // "evet" = devam et / yeni komut dinle.
+                followUps = 0
+                restartListening()
+            }
+            else -> {
+                say("Anlamadım. Tekrar oku, daha detaylı ya da yeni komut diyebilirsin.", ev)
+                followUp(api, ev, sessionId)
+            }
+        }
+    }
+
+    /** Son oturumun yanıtını özetleyip okur (tuş/bildirim "özet" istendiğinde). */
+    suspend fun summarizeLast(sessionId: String? = null) {
         val api = api() ?: return
         val ev = evren() ?: return
-        val sessions = runCatching { api.sessions(3) }.getOrDefault(emptyList())
-            .filter { it.str("parentID").isNullOrBlank() }
-        val sid = targetSessionId ?: sessions.firstOrNull()?.str("id") ?: return
+        val sid = sessionId ?: targetSessionId ?: run {
+            val sessions = runCatching { api.sessions(3) }.getOrDefault(emptyList())
+                .filter { it.str("parentID").isNullOrBlank() }
+            sessions.firstOrNull()?.str("id")
+        } ?: return
+        targetSessionId = sid
+        followUps = 0
         speakSummary(api, ev, sid)
     }
 
@@ -431,5 +589,6 @@ class VoiceFlow(
     fun reset() {
         stage = Stage.IDLE
         pendingText = null
+        followUps = 0
     }
 }

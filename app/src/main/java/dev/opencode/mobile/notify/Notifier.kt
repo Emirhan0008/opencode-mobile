@@ -9,6 +9,7 @@ import android.content.Intent
 import android.os.Build
 import androidx.core.app.NotificationCompat
 import dev.opencode.mobile.MainActivity
+import dev.opencode.mobile.voice.VoiceService
 
 /** Uygulama arka plandayken izin istekleri, sorular ve görev bitişleri için bildirim. */
 object Notifier {
@@ -49,6 +50,64 @@ object Notifier {
         return PendingIntent.getActivity(
             context,
             id,
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+    }
+
+    /**
+     * Görev bitti bildirimi: **Sesli dinle** (son yanıtın özetini okur) ve
+     * **Yeni komut** (sesli akışı başlatır) düğmeleriyle. Kullanıcı ekranı hiç
+     * açmadan yanıtı dinleyebilsin diye [sessionId] ile sesli servise gider.
+     */
+    fun notifyTaskDone(
+        context: Context,
+        id: Int,
+        title: String,
+        text: String,
+        sessionId: String?,
+    ) {
+        init(context)
+        val actions = mutableListOf<NotificationCompat.Action>()
+        actions += NotificationCompat.Action(
+            0,
+            "Sesli dinle",
+            voiceServiceIntent(context, id * 31 + 1, VoiceService.ACTION_SUMMARY, sessionId),
+        )
+        actions += NotificationCompat.Action(
+            0,
+            "Yeni komut",
+            voiceServiceIntent(context, id * 31 + 2, VoiceService.ACTION_LISTEN, null),
+        )
+        val builder = NotificationCompat.Builder(context, CHANNEL_ID)
+            .setSmallIcon(dev.opencode.mobile.R.drawable.ic_stat_phone)
+            .setContentTitle(title)
+            .setContentText(text)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(text))
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setAutoCancel(true)
+            .setContentIntent(contentIntent(context, id, sessionId))
+        for (a in actions) builder.addAction(a)
+        val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        manager.notify(id, builder.build())
+    }
+
+    /** Sesli servise yönelen PendingIntent (bildirim düğmeleri için). */
+    private fun voiceServiceIntent(
+        context: Context,
+        requestCode: Int,
+        action: String,
+        sessionId: String?,
+    ): PendingIntent {
+        val intent = Intent(context, VoiceService::class.java).apply {
+            this.action = action
+            if (!sessionId.isNullOrBlank()) {
+                putExtra(VoiceService.EXTRA_SESSION_ID, sessionId)
+            }
+        }
+        return PendingIntent.getForegroundService(
+            context,
+            requestCode,
             intent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )

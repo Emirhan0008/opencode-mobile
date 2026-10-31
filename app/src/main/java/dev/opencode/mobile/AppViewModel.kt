@@ -989,7 +989,15 @@ class AppViewModel(
         if (wasBusy && !AppVisibility.visible) {
             val title = _sessions.value.sessions.firstOrNull { it.str("id") == sid }?.str("title")
                 ?.ifBlank { null } ?: "oturum"
-            notify(sid.hashCode(), "Görev tamamlandı", title)
+            runCatching {
+                Notifier.notifyTaskDone(
+                    appContext,
+                    sid.hashCode(),
+                    "Görev tamamlandı",
+                    "$title — yanıtı sesli dinleyebilirsin",
+                    sid,
+                )
+            }
         }
     }
 

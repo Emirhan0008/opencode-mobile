@@ -89,7 +89,10 @@ class VoiceService : Service() {
                 val long = intent.getBooleanExtra(EXTRA_LONG, false)
                 scope.launch { gesture(long) }
             }
-            ACTION_SUMMARY -> scope.launch { withBusy { flow.summarizeLast() } }
+            ACTION_SUMMARY -> {
+                val sid = intent.getStringExtra(EXTRA_SESSION_ID)
+                scope.launch { withBusy { flow.summarizeLast(sid) } }
+            }
         }
         return START_STICKY
     }
@@ -378,6 +381,12 @@ class VoiceService : Service() {
             Intent(this, VoiceService::class.java).apply { action = ACTION_LISTEN },
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
+        val summary = PendingIntent.getService(
+            this,
+            4,
+            Intent(this, VoiceService::class.java).apply { action = ACTION_SUMMARY },
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
         return NotificationCompat.Builder(this, Notifier.CHANNEL_ID)
             .setSmallIcon(android.R.drawable.ic_btn_speak_now)
             .setContentTitle("OpenCode — sesli komut")
@@ -387,6 +396,7 @@ class VoiceService : Service() {
             .setSilent(true)
             .setContentIntent(open)
             .addAction(0, "Dinle", listen)
+            .addAction(0, "Özet", summary)
             .addAction(0, "Durdur", stop)
             .build()
     }
@@ -421,10 +431,13 @@ class VoiceService : Service() {
         private const val TAG = "VoiceService"
         private const val FOREGROUND_ID = 1002
         private const val ACTION_STOP = "dev.opencode.mobile.voice.STOP"
-        private const val ACTION_LISTEN = "dev.opencode.mobile.voice.LISTEN"
         private const val ACTION_BUTTON = "dev.opencode.mobile.voice.BUTTON"
         private const val EXTRA_LONG = "dev.opencode.mobile.voice.LONG"
-        private const val ACTION_SUMMARY = "dev.opencode.mobile.voice.SUMMARY"
+
+        /** Bildirim düğmeleri ve [Notifier] ile paylaşılan eylem adları. */
+        const val ACTION_LISTEN = "dev.opencode.mobile.voice.LISTEN"
+        const val ACTION_SUMMARY = "dev.opencode.mobile.voice.SUMMARY"
+        const val EXTRA_SESSION_ID = "dev.opencode.mobile.voice.SESSION_ID"
 
         /** Yedek yol: medya tuşu yayınından gelen jest. */
         fun button(context: Context, longPress: Boolean) {
@@ -434,6 +447,27 @@ class VoiceService : Service() {
                     putExtra(EXTRA_LONG, longPress)
                 }
                 ContextCompat.startForegroundService(context, intent)
+            }
+        }
+
+        /** Bildirimden "Sesli dinle": verilen oturumun son yanıtını özetleyip okur. */
+        fun summary(context: Context, sessionId: String? = null) {
+            runCatching {
+                val intent = Intent(context, VoiceService::class.java).apply {
+                    action = ACTION_SUMMARY
+                    if (!sessionId.isNullOrBlank()) putExtra(EXTRA_SESSION_ID, sessionId)
+                }
+                ContextCompat.startForegroundService(context, intent)
+            }
+        }
+
+        /** Bildirimden "Dinle": sesli komut akışını başlatır. */
+        fun listen(context: Context) {
+            runCatching {
+                ContextCompat.startForegroundService(
+                    context,
+                    Intent(context, VoiceService::class.java).apply { action = ACTION_LISTEN },
+                )
             }
         }
 
