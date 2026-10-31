@@ -1271,13 +1271,13 @@ class AppViewModel(
     }
 
     private suspend fun shutdownTargetId(current: Api): String? {
-        val fromPlan = _shutdownPlan.value?.split('|')?.getOrNull(1)?.takeIf { it.isNotBlank() }
-        if (fromPlan != null) return fromPlan
-        // Plan yoksa RASTGELE oturuma düşme: yalnızca kalıcı gözcü oturumu varsa onu kullan.
-        // (Eskiden listenin ilk oturumunu seçiyordu; `-Status` komutu kullanıcının
-        // çalışma oturumuna düşüp transkripti kirletiyordu.)
+        // Önce kalıcı gözcü oturumu: `-Status`/`-Cancel` gibi gözcü komutları ASLA
+        // kullanıcının çalışma oturumuna düşmesin (eski plan hedefi farklı olsa bile).
         val dedicated = _shutdownSessionId.value.takeIf { it.isNotBlank() }
         if (dedicated != null) return dedicated
+        // Gözcü oturumu yoksa eski planın hedefini kullan (geçiş dönemi).
+        val fromPlan = _shutdownPlan.value?.split('|')?.getOrNull(1)?.takeIf { it.isNotBlank() }
+        if (fromPlan != null) return fromPlan
         return null
     }
 
