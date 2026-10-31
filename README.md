@@ -58,14 +58,21 @@ TUI estetiğinde: koyu zemin, monospace yazılar, kutulu paneller.
 Telefon cebinizdeyken ve ekran kilitliyken **kulaklığın orta tuşuyla** çalışır:
 
 1. Tuşa bas → bip → konuş. Sessizlik algılanınca kayıt kendiliğinden biter.
-2. Uygulama duyduğunu **sesli okur** ("Şunu mu söyledin: …"). Onaylamak için tuşa bas;
-   yeniden söylemek için **uzun bas** (≥ 0,7 sn).
-3. En yeni 5 üst düzey oturum sesli okunur; **numarayı söyleyin** (1–5).
+2. Uygulama duyduğunu **sesli okur** ("Şunu mu söyledin: …") ve **kendiliğinden dinlemeye
+   geçer**. Tuşa basmak gerekmez: **"evet"** de (onayla/tamam/doğru da olur) ya da
+   **"hayır"** de (tekrar/yanlış) — yeniden söylemek için. "İptal" akışı bitirir.
+3. En yeni 5 üst düzey oturum sesli okunur, ardından mikrofon açılır; **numarayı söyle**
+   ("bir"…"beş"). Anlaşılmazsa bir kez daha sorar, yine olmazsa en yeni oturuma gider.
 4. Prompt gönderilir, tur bitene kadar beklenir.
 5. Modelin **size yazdığı yanıt** (yalnızca `type=assistant` mesajın metin parçaları —
    kabuk/araç çıktıları, düşünme ve alt ajanlar hariç) kısa bir özete çevrilip sesli okunur.
 
-Konuşurken tuş = sus; uzun bas = son yanıtı yeniden özetle.
+Tuş yalnızca **başlatmak** için gerekir; onay ve oturum seçimi tamamen konuşarak yapılır.
+Konuşma sırasında tuş = sus; uzun bas = son yanıtı yeniden özetle.
+
+Medya tuşunun uygulamaya ulaşması için servis **ses odağı** ister (`TRANSIENT_MAY_DUCK`):
+Android medya tuşlarını yalnızca odak sahibi/çalan oturuma yönlendirir; odak alınmazsa
+tuş başka uygulamaya ya da Google Asistan'a gider ve hiç ulaşmaz.
 
 Ses/LLM işleri **OpenCode'dan bağımsızdır**; OpenCode yalnızca prompt hedefi ve yanıt
 kaynağıdır. Tek sağlayıcı **EVREN** (`https://evren-llmapi.ssyz.org.tr`), üç ayrı ve

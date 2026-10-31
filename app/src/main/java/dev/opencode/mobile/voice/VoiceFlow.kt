@@ -13,13 +13,14 @@ import kotlinx.serialization.json.JsonObject
  * Sesli komut akışının **durum makinesi**. Servisten bağımsız tutuldu ki
  * test edilebilsin ve servis yalnızca yaşam döngüsü/kablo işini yapsın.
  *
- * Akış (ekrana bakmadan, kilitli ekranda):
+ * Akış (ekrana bakmadan, kilitli ekranda) — **eller serbest**: tuş yalnızca
+ * başlatmak için gerekir, gerisi konuşarak yürür:
  *
- *   tuş → [DINLE] → STT → [OKU: "şunu mu söyledin …"] → tuş = onay
- *        → [OTURUM SOR] → numara söyle → prompt gönder
+ *   [DINLE] → STT → [OKU: "şunu mu söyledin …"] → otomatik dinle → "evet"
+ *        → [OTURUM SOR] → otomatik dinle → "iki" → prompt gönder
  *        → tur bitene kadar bekle → modelin YANITINI özetle → [OKU: özet]
  *
- * Her aşamada tuş: konuşurken "sus", beklerken "ilerle/onayla", kayıtta "bitir".
+ * Sözler: evet/onayla/tamam · hayır/tekrar · iptal · bir…beş.
  */
 class VoiceFlow(
     private val context: Context,
@@ -35,6 +36,9 @@ class VoiceFlow(
 
     private var pendingText: String? = null
     private var targetSessionId: String? = null
+
+    /** TTS bittikten sonra mikrofonu açmadan önce beklenen süre (yankı önleme). */
+    private suspend fun afterSpeechPause() = delay(500)
 
     // ------------------------------------------------------------- yardımcı
 
@@ -92,8 +96,8 @@ class VoiceFlow(
         }
     }
 
-    /** 1) Dinle → 2) metni oku → 3) onay bekle. */
-    private suspend fun listenAndConfirm() {
+    /** 1) Dinle → 2) metni oku → 3) sesli onay al. Tuş gerekmez. */
+    private suspend fun listenAndConfirm(attempt: Int = 1) {
         val ev = evren()
         if (ev == null) {
             onState("EVREN anahtarları eksik — Ayarlar → Sesli Komut")
@@ -106,7 +110,7 @@ class VoiceFlow(
         }
 
         stage = Stage.LISTENING
-        onState("dinliyorum…")
+        onState(if (attempt == 1) "dinliyorum…" else "tekrar dinliyorum…")
         audio.beep(start = true)
         audio.openInputRoute()
         val wav = try {
@@ -118,7 +122,12 @@ class VoiceFlow(
 
         if (wav == null) {
             stage = Stage.IDLE
-            say("Ses duyamadım. Tekrar denemek için tuşa bas.", ev)
+            if (attempt < 2) {
+                say("Ses duyamadım. Bir kez daha dinliyorum.", ev)
+                listenAndConfirm(attempt + 1)
+            } else {
+                say("Ses duyamadım. Hazır olduğunda dinle düğmesine bas.", ev)
+            }
             return
         }
 
@@ -132,7 +141,12 @@ class VoiceFlow(
 
         if (text.isBlank()) {
             stage = Stage.IDLE
-            say("Anlayamadım. Tekrar denemek için tuşa bas.", ev)
+            if (attempt < 2) {
+                say("Anlayamadım. Bir kez daha dinliyorum.", ev)
+                listenAndConfirm(attempt + 1)
+            } else {
+                say("Anlayamadım. Hazır olduğunda dinle düğmesine bas.", ev)
+            }
             return
         }
 
@@ -142,11 +156,77 @@ class VoiceFlow(
         if (settings.voiceConfirm.first()) {
             stage = Stage.CONFIRMING
             say("Şunu mu söyledin: $text", ev)
-            say("Onaylamak için tuşa bas. Yeniden söylemek için tuşa iki kez bas.", ev)
-            stage = Stage.CONFIRMING
+            awaitYesNo(ev, attempt = 1)
         } else {
             confirmAndPick()
         }
+    }
+
+    /**
+     * "Evet/hayır" dinler — eller serbest modun kalbi. Tuşa basmak gerekmez:
+     * soru okunur okunmaz kayıt başlar.
+     *
+     *  - evet / onayla / tamam / doğru → [confirmAndPick]
+     *  - hayır / yanlış / tekrar       → [restartListening]
+     *  - iptal / vazgeç                → akış biter
+     *  - anlaşılmaz                    → bir kez daha sorar, sonra iptal eder
+     */
+    private suspend fun awaitYesNo(ev: EvrenClient, attempt: Int) {
+        if (attempt > 1) say("Evet ya da hayır de.", ev)
+        afterSpeechPause()
+        stage = Stage.LISTENING
+        audio.beep(start = true)
+        audio.openInputRoute()
+        val wav = try {
+            audio.record(maxMs = 7_000, silenceMs = 900, noSpeechMs = 4_500)
+        } finally {
+            audio.closeInputRoute()
+        }
+        audio.beep(start = false)
+
+        val answer = if (wav == null) "" else runCatching { ev.transcribe(wav) }.getOrDefault("")
+        onState("cevap: ${answer.ifBlank { "—" }}")
+
+        when (parseYesNo(answer)) {
+            true -> confirmAndPick()
+            false -> {
+                say("Peki, yeniden söyle.", ev)
+                restartListening()
+            }
+            null -> {
+                if (parseCancel(answer)) {
+                    stage = Stage.IDLE
+                    say("Vazgeçtim.", ev)
+                    return
+                }
+                if (attempt < 2) {
+                    awaitYesNo(ev, attempt + 1)
+                } else {
+                    stage = Stage.IDLE
+                    onState("onay alınamadı")
+                    say("Onay alamadım, iptal ettim.", ev)
+                }
+            }
+        }
+    }
+
+    /** "evet/hayır" sınıflandırması. Belirsizse null. */
+    private fun parseYesNo(text: String): Boolean? {
+        val t = text.lowercase().trim()
+        if (t.isEmpty()) return null
+        // Olumsuzlar önce: "hayır" içinde "evet" yok ama "yok" gibi kısa sözler
+        // başka kelimelerin içinde geçebilir, bu yüzden tam kelime aranır.
+        val no = listOf("hayır", "hayir", "yok", "olmaz", "yanlış", "yanlis", "tekrar", "değil", "degil", "iptal", "vazgeç", "vazgec")
+        val yes = listOf("evet", "onayla", "onay", "tamam", "doğru", "dogru", "olur", "gönder", "gonder", "kabul", "aynen", "peki")
+        fun has(words: List<String>) = words.any { w -> Regex("(^|\\s)${Regex.escape(w)}(\\s|$)").containsMatchIn(t) || t == w }
+        if (has(no)) return false
+        if (has(yes)) return true
+        return null
+    }
+
+    private fun parseCancel(text: String): Boolean {
+        val t = text.lowercase()
+        return listOf("iptal", "vazgeç", "vazgec", "boşver", "bosver").any { t.contains(it) }
     }
 
     /** Onaylandı → oturum sor. */
@@ -171,17 +251,23 @@ class VoiceFlow(
         say("Hangi oturuma göndereyim? ${list.joinToString(". ")}", ev)
         say("Numarayı söyle.", ev)
         stage = Stage.PICKING
-        listenForNumber(sessions)
+        // Eller serbest: numara sorusu okunur okunmaz dinlemeye geç (tuş yok).
+        afterSpeechPause()
+        listenForNumber(sessions, attempt = 1)
     }
 
-    /** Numarayı dinle ve eşleştir; eşleşmezse ilk (en yeni) oturum. */
-    private suspend fun listenForNumber(sessions: List<JsonObject>? = null) {
+    /** Numarayı dinle ve eşleştir; anlaşılmazsa bir kez daha sorar. */
+    private suspend fun listenForNumber(
+        sessions: List<JsonObject>? = null,
+        attempt: Int = 1,
+    ) {
         val ev = evren() ?: return
         val api = api() ?: return
         val list = sessions ?: runCatching { api.sessions(6) }.getOrDefault(emptyList())
             .filter { it.str("parentID").isNullOrBlank() }
             .take(5)
 
+        if (attempt > 1) say("Bir ile beş arasında bir numara söyle.", ev)
         stage = Stage.LISTENING
         audio.beep(start = true)
         audio.openInputRoute()
@@ -193,7 +279,23 @@ class VoiceFlow(
         audio.beep(start = false)
 
         val answer = if (wav == null) "" else runCatching { ev.transcribe(wav) }.getOrDefault("")
+        onState("seçim: ${answer.ifBlank { "—" }}")
+
+        if (parseCancel(answer)) {
+            pendingText = null
+            stage = Stage.IDLE
+            say("Vazgeçtim.", ev)
+            return
+        }
+
         val idx = parseOrdinal(answer)
+        if (idx == null) {
+            // Sessiz/anlaşılmaz: bir kez daha dinle, sonra en yeni oturuma düş.
+            if (attempt < 2) {
+                listenForNumber(list, attempt + 1)
+                return
+            }
+        }
         val chosen = list.getOrNull((idx ?: 1) - 1) ?: list.firstOrNull()
         if (chosen == null) {
             stage = Stage.IDLE
@@ -202,6 +304,8 @@ class VoiceFlow(
         targetSessionId = chosen.str("id")
         val title = chosen.str("title") ?: "oturum"
         onState("hedef: $title")
+        say("Tamam, $title oturumuna gönderiyorum.", ev)
+        afterSpeechPause()
         send(api, ev, chosen.str("id")!!, title)
     }
 

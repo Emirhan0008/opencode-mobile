@@ -170,8 +170,14 @@ private fun Root(
     val voiceTestResult by vm.voiceTestResult.collectAsState()
     val voiceTesting by vm.voiceTesting.collectAsState()
     val activity = androidx.compose.ui.platform.LocalContext.current
+    // Sesli komut: izinleri iste ve servisi ÖN PLANDA olduğumuz bu anda başlat.
+    // (ViewModel'deki ilk başlatma denemesi, uygulama henüz ön plana geçmeden
+    //  yapıldığı için Android tarafından reddedilebiliyor.)
     androidx.compose.runtime.LaunchedEffect(voiceEnabled) {
-        if (voiceEnabled) (activity as? MainActivity)?.requestVoicePermissions()
+        if (voiceEnabled) {
+            (activity as? MainActivity)?.requestVoicePermissions()
+            dev.opencode.mobile.voice.VoiceService.start(activity)
+        }
     }
     var connectError by remember { mutableStateOf<String?>(null) }
     var connecting by remember { mutableStateOf(false) }

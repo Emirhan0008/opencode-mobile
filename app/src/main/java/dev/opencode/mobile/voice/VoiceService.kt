@@ -96,6 +96,7 @@ class VoiceService : Service() {
         runCatching { mediaSession?.isActive = false }
         runCatching { mediaSession?.release() }
         mediaSession = null
+        abandonAudioFocus()
         audio.stop()
         scope.cancel()
         super.onDestroy()
@@ -103,8 +104,62 @@ class VoiceService : Service() {
 
     // ------------------------------------------------------- MediaSession
 
+    // ------------------------------------------------------- media session
+
+    private var audioFocus: android.media.AudioManager? = null
+    private var focusRequest: android.media.AudioFocusRequest? = null
+
+    /**
+     * Medya tuşlarının bize yönlenmesi için ses odağı ister. [AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK]
+     * kullanılır: müzik çalıyorsa tamamen durdurmaz, yalnızca kısar — kullanıcının
+     * arka planda müzik dinlemesini bozmadan tuşu alırız.
+     */
+    private fun requestAudioFocus() {
+        runCatching {
+            val am = getSystemService(Context.AUDIO_SERVICE) as android.media.AudioManager
+            audioFocus = am
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                val req = android.media.AudioFocusRequest.Builder(android.media.AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
+                    .setAudioAttributes(
+                        android.media.AudioAttributes.Builder()
+                            .setUsage(android.media.AudioAttributes.USAGE_ASSISTANT)
+                            .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SPEECH)
+                            .build(),
+                    )
+                    .setOnAudioFocusChangeListener { }
+                    .build()
+                focusRequest = req
+                am.requestAudioFocus(req)
+            } else {
+                @Suppress("DEPRECATION")
+                am.requestAudioFocus(
+                    null,
+                    android.media.AudioManager.STREAM_MUSIC,
+                    android.media.AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK,
+                )
+            }
+            android.util.Log.d(TAG, "ses odağı istendi")
+        }.onFailure { android.util.Log.w(TAG, "ses odağı alınamadı: ${it.message}") }
+    }
+
+    private fun abandonAudioFocus() {
+        runCatching {
+            val am = audioFocus ?: return@runCatching
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                focusRequest?.let { am.abandonAudioFocusRequest(it) }
+            } else {
+                @Suppress("DEPRECATION")
+                am.abandonAudioFocus(null)
+            }
+        }
+    }
+
     private fun setupMediaSession() {
         val session = MediaSession(this, "OpenCodeVoice")
+        // ÖNEMLİ: Android medya tuşlarını "son çalan" / ses odağı alan oturuma
+        // yönlendirir. Odak istemezsek kulaklık tuşu başka uygulamaya (ya da
+        // Google Asistan'a) gider ve bize hiç ulaşmaz.
+        requestAudioFocus()
         session.setCallback(object : MediaSession.Callback() {
             override fun onMediaButtonEvent(mediaButtonIntent: Intent): Boolean {
                 android.util.Log.d(TAG, "onMediaButtonEvent: ${mediaButtonIntent.action} extras=${mediaButtonIntent.extras?.keySet()}")
