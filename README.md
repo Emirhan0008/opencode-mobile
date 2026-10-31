@@ -70,9 +70,20 @@ Telefon cebinizdeyken ve ekran kilitliyken **kulaklığın orta tuşuyla** çal�
 Tuş yalnızca **başlatmak** için gerekir; onay ve oturum seçimi tamamen konuşarak yapılır.
 Konuşma sırasında tuş = sus; uzun bas = son yanıtı yeniden özetle.
 
-Medya tuşunun uygulamaya ulaşması için servis **ses odağı** ister (`TRANSIENT_MAY_DUCK`):
-Android medya tuşlarını yalnızca odak sahibi/çalan oturuma yönlendirir; odak alınmazsa
-tuş başka uygulamaya ya da Google Asistan'a gider ve hiç ulaşmaz.
+Medya tuşunun uygulamaya ulaşması için iki şey gerekir:
+
+1. **Ses odağı** (`AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK`, `USAGE_ASSISTANT`) — alınmazsa
+   tuş başka uygulamaya/Google Asistan'a gider.
+2. **Gerçek bir ses çalımı** — Android 13 `MediaSessionService`, medya tuşunu yalnızca
+   "son ses çalan" uygulamalar arasından seçer (`getSortedAudioPlaybackClientUids`).
+   Servis açılışında ve ekran her kapandığında ~60 ms'lik **sessiz** bir PCM çalınır;
+   bu, oturumu medya tuşu oturumu yapar. Aksi hâlde oturum aktif ve odak sahibi olsa
+   bile tuş "son bilinen alıcıya" (YouTube/Spotify) gider — telefonda tam olarak bu
+   yaşandı.
+
+Oturum ayrıca `setMediaButtonReceiver` ile kendi `VoiceButtonReceiver`'ını bildirir;
+sistem bunu `secure.media_button_receiver` ayarına yazar, böylece oturum seçilemese
+bile tuş yedeği bize döner.
 
 Ses/LLM işleri **OpenCode'dan bağımsızdır**; OpenCode yalnızca prompt hedefi ve yanıt
 kaynağıdır. Tek sağlayıcı **EVREN** (`https://evren-llmapi.ssyz.org.tr`), üç ayrı ve

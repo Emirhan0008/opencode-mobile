@@ -62,6 +62,8 @@ class VoiceService : Service() {
         val settings = Settings(applicationContext)
         flow = VoiceFlow(applicationContext, settings, audio) { st -> updateNotification(st) }
         setupMediaSession()
+        registerScreenReceiver()
+        claimMediaButtonSession()
 
         // Ayarlar kapatılırsa servis kendini durdurur.
         scope.launch {
@@ -93,6 +95,8 @@ class VoiceService : Service() {
     }
 
     override fun onDestroy() {
+        runCatching { screenReceiver?.let { unregisterReceiver(it) } }
+        screenReceiver = null
         runCatching { mediaSession?.isActive = false }
         runCatching { mediaSession?.release() }
         mediaSession = null
@@ -108,6 +112,65 @@ class VoiceService : Service() {
 
     private var audioFocus: android.media.AudioManager? = null
     private var focusRequest: android.media.AudioFocusRequest? = null
+
+    /** Ekran kapanınca medya tuşu sahipliğini tazelemek için. */
+    private var screenReceiver: android.content.BroadcastReceiver? = null
+
+    /**
+     * Medya tuşu sahipliğini **gerçek bir ses çalımı** ile kazanır.
+     *
+     * Android 13'te `MediaSessionService`, medya tuşunu yalnızca "son ses çalan"
+     * uygulamalar arasından seçiyor (`getSortedAudioPlaybackClientUids`). Hiç ses
+     * çalmayan bir oturum, aktif ve odak sahibi olsa bile **medya tuşu oturumu
+     * sayılmıyor** — tuş o zaman "son bilinen alıcıya" (YouTube/Spotify) gidiyor.
+     * 60 ms'lik sessiz bir PCM çalımı bizi o listeye sokar ve tuş bize gelir.
+     */
+    private fun claimMediaButtonSession() {
+        scope.launch {
+            runCatching {
+                val attrs = android.media.AudioAttributes.Builder()
+                    .setUsage(android.media.AudioAttributes.USAGE_MEDIA)
+                    .setContentType(android.media.AudioAttributes.CONTENT_TYPE_MUSIC)
+                    .build()
+                val format = android.media.AudioFormat.Builder()
+                    .setEncoding(android.media.AudioFormat.ENCODING_PCM_16BIT)
+                    .setSampleRate(44_100)
+                    .setChannelMask(android.media.AudioFormat.CHANNEL_OUT_MONO)
+                    .build()
+                val frames = 2_646 // ~60 ms
+                val track = android.media.AudioTrack.Builder()
+                    .setAudioAttributes(attrs)
+                    .setAudioFormat(format)
+                    .setTransferMode(android.media.AudioTrack.MODE_STATIC)
+                    .setBufferSizeInBytes(frames * 2)
+                    .build()
+                try {
+                    track.write(ShortArray(frames), 0, frames)
+                    track.play()
+                    delay(120)
+                    runCatching { track.stop() }
+                } finally {
+                    runCatching { track.release() }
+                }
+                android.util.Log.d(TAG, "medya tuşu sahipliği istendi")
+            }.onFailure { android.util.Log.w(TAG, "tuş sahipliği alınamadı: ${it.message}") }
+        }
+    }
+
+    private fun registerScreenReceiver() {
+        val r = object : android.content.BroadcastReceiver() {
+            override fun onReceive(context: Context?, intent: Intent?) {
+                if (intent?.action == Intent.ACTION_SCREEN_OFF) claimMediaButtonSession()
+            }
+        }
+        screenReceiver = r
+        androidx.core.content.ContextCompat.registerReceiver(
+            this,
+            r,
+            android.content.IntentFilter(Intent.ACTION_SCREEN_OFF),
+            androidx.core.content.ContextCompat.RECEIVER_NOT_EXPORTED,
+        )
+    }
 
     /**
      * Medya tuşlarının bize yönlenmesi için ses odağı ister. [AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK]
@@ -160,6 +223,30 @@ class VoiceService : Service() {
         // yönlendirir. Odak istemezsek kulaklık tuşu başka uygulamaya (ya da
         // Google Asistan'a) gider ve bize hiç ulaşmaz.
         requestAudioFocus()
+
+        val attrs = android.media.AudioAttributes.Builder()
+            .setUsage(android.media.AudioAttributes.USAGE_ASSISTANT)
+            .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SPEECH)
+            .build()
+
+        // Oturumun "yerel oynatıcı" olduğunu ve ses özniteliklerini bildir.
+        // Bu yapılmazsa oturum USAGE_MEDIA/CONTENT_TYPE_UNKNOWN olarak görünür ve
+        // bazı OEM'ler (MIUI) oturumu medya tuşu hedefi saymaz.
+        session.setPlaybackToLocal(attrs)
+
+        // MIUI'de medya tuşu oturumu boş kalırsa sistem "son bilinen" medya tuşu
+        // alıcısına (ör. YouTube/Spotify) gidiyor. Kendi alıcımızı bildirerek o
+        // yedeğin de bize dönmesini sağla.
+        val buttonPi = PendingIntent.getBroadcast(
+            this,
+            3,
+            Intent(this, VoiceButtonReceiver::class.java).apply {
+                action = Intent.ACTION_MEDIA_BUTTON
+            },
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+        session.setMediaButtonReceiver(buttonPi)
+
         session.setCallback(object : MediaSession.Callback() {
             override fun onMediaButtonEvent(mediaButtonIntent: Intent): Boolean {
                 android.util.Log.d(TAG, "onMediaButtonEvent: ${mediaButtonIntent.action} extras=${mediaButtonIntent.extras?.keySet()}")
@@ -178,9 +265,19 @@ class VoiceService : Service() {
         )
         session.setPlaybackState(
             PlaybackState.Builder()
-                .setActions(PlaybackState.ACTION_PLAY_PAUSE or PlaybackState.ACTION_STOP)
+                .setActions(
+                    PlaybackState.ACTION_PLAY or PlaybackState.ACTION_PAUSE or
+                        PlaybackState.ACTION_PLAY_PAUSE or PlaybackState.ACTION_STOP or
+                        PlaybackState.ACTION_PLAY_FROM_MEDIA_ID,
+                )
                 // PLAYING: bazı OEM'ler kulaklık tuşunu yalnız "çalan" oturuma yönlendirir.
-                .setState(PlaybackState.STATE_PLAYING, 0, 1f)
+                .setState(PlaybackState.STATE_PLAYING, 0, 1f, SystemClock.elapsedRealtime())
+                .build(),
+        )
+        session.setMetadata(
+            android.media.MediaMetadata.Builder()
+                .putString(android.media.MediaMetadata.METADATA_KEY_TITLE, "OpenCode sesli komut")
+                .putString(android.media.MediaMetadata.METADATA_KEY_ARTIST, "OpenCode")
                 .build(),
         )
         session.isActive = true
