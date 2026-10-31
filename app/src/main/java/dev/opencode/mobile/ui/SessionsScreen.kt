@@ -853,12 +853,17 @@ private fun ShutdownDialog(
     onCancel: () -> Unit,
     onDismiss: () -> Unit,
 ) {
-    // Diyalog açıkken canlılığı ilk açılışta ve 30 sn'de bir otomatik yenile.
+    // Canlılık yalnızca DİYALOG AÇIKKEN sorgulanır: ilk açılışta bir kez, sonra
+    // 5 dakikada bir. Diyalog kapalıyken hiçbir periyodik sorgu YOK (yalnızca
+    // uygulama açılışında/bağlantı kurulunca bir kez, plan varsa).
+    // 5 dk seçildi: gözcü zaten betik tarafında çalışıyor; ekranın 30 sn'de bir
+    // tazelenmesi gereksiz trafik ve gözcü oturumunda gereksiz `-Status` satırı
+    // üretiyordu. Kapanma gecikmesi açısından 5 dk önemsiz.
     LaunchedEffect(Unit) {
         onPrepareShutdownSession()
         onRefreshWatch()
         while (true) {
-            delay(30_000)
+            delay(300_000)
             onRefreshWatch()
         }
     }
