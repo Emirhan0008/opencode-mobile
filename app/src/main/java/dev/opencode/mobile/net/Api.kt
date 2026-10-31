@@ -127,6 +127,30 @@ class Api(baseUrl: String, private val token: String) {
         post("/api/session/$id/prompt", buildJsonObject { put("text", text) })
 
     /**
+     * Asistanın **kullanıcıya yazdığı** son yanıt metni. Sesli özetin girdisi budur:
+     * yalnızca `type=assistant` mesajın `content[].type == "text"` parçaları alınır.
+     * Kabuk/araç çıktıları, düşünme (reasoning), sistem mesajları ve alt ajan
+     * oturumları özete GİRMEZ — kullanıcı "modelin benim için ürettiği yanıt"ı duymak istiyor.
+     */
+    suspend fun assistantText(id: String, limit: Int = 12): String {
+        val msgs = messagesRecent(id, limit)
+        // En yeniden eskiye: metin parçası OLAN ilk asistan mesajı. Boş/akış hâlindeki
+        // mesajlar atlanır, böylece özet her zaman gerçek bir yanıtı okur.
+        for (msg in msgs) {
+            if (msg.str("type") != "assistant") continue
+            val text = msg.arr("content")
+                .mapNotNull { part ->
+                    val o = part.obj()
+                    if (o.str("type") == "text") o.str("text")?.takeIf { it.isNotBlank() } else null
+                }
+                .joinToString("\n\n")
+                .trim()
+            if (text.isNotEmpty()) return text
+        }
+        return ""
+    }
+
+    /**
      * Oturumun **kalıcı sistem talimatı** girdileri. Bunlar sohbet geçmişine
      * yazılmaz; her turda sistem bağlamına enjekte edilir (compaction'dan etkilenmez).
      */

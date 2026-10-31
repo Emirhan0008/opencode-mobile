@@ -53,6 +53,51 @@ TUI estetiğinde: koyu zemin, monospace yazılar, kutulu paneller.
   `t.me` linki. Uygulama veya OpenTunnel kapalıyken Telegram'dan devam edilebilir.
 - **Tema**: koyu / açık tema anahtarı (kalıcı).
 
+## Sesli komut (ekran kilitli · Bluetooth kulaklık)
+
+Telefon cebinizdeyken ve ekran kilitliyken **kulaklığın orta tuşuyla** çalışır:
+
+1. Tuşa bas → bip → konuş. Sessizlik algılanınca kayıt kendiliğinden biter.
+2. Uygulama duyduğunu **sesli okur** ("Şunu mu söyledin: …"). Onaylamak için tuşa bas;
+   yeniden söylemek için **uzun bas** (≥ 0,7 sn).
+3. En yeni 5 üst düzey oturum sesli okunur; **numarayı söyleyin** (1–5).
+4. Prompt gönderilir, tur bitene kadar beklenir.
+5. Modelin **size yazdığı yanıt** (yalnızca `type=assistant` mesajın metin parçaları —
+   kabuk/araç çıktıları, düşünme ve alt ajanlar hariç) kısa bir özete çevrilip sesli okunur.
+
+Konuşurken tuş = sus; uzun bas = son yanıtı yeniden özetle.
+
+Ses/LLM işleri **OpenCode'dan bağımsızdır**; OpenCode yalnızca prompt hedefi ve yanıt
+kaynağıdır. Tek sağlayıcı **EVREN** (`https://evren-llmapi.ssyz.org.tr`), üç ayrı ve
+tek modele kısıtlı anahtar:
+
+| İş | Model | Uç |
+|---|---|---|
+| Konuşma → metin | `qwen3-asr-1.7b` | `POST /v1/audio/transcriptions` (16 kHz WAV) |
+| Metin → ses | `voxcpm2` | `POST /v1/audio/speech` (mp3, ses: deniz/ece/emre/kaan) |
+| Sesli özet | `qwen3.8-flash-next` | `POST /v1/chat/completions` (`reasoning_effort: none`) |
+
+Anahtarlar **koda gömülmez**; Ayarlar → *SESLİ KOMUT* bölümünden girilir ve
+**AES-GCM + Android Keystore** ile şifreli saklanır (`data/SecurePrefs.kt`). Anahtar
+cihazdan dışarı çıkmaz; bu yüzden yedekle taşınmaz, yeni cihazda yeniden girilir.
+
+Özet çağrısında `reasoning_effort: "none"` zorunludur: düşünme açıkken ~5,3 sn,
+kapalıyken ~2,3 sn (ölçüldü) — sesli akışta fark belirgindir.
+
+Kayıt Bluetooth **SCO** üzerinden yapılır, okuma **A2DP** ile; ikisi aynı anda
+güvenilir çalışmadığı için sırayla kullanılır (`voice/AudioEngine.kt`). Ekran kilitli
+çalışma için `RECORD_AUDIO`, `BLUETOOTH_CONNECT`, `FOREGROUND_SERVICE_MICROPHONE`
+ve `POST_NOTIFICATIONS` gerekir; anahtar açılınca uygulama bunları ister. MIUI/HyperOS'ta
+ayrıca **Otomatik başlatma** izni ve **pil kısıtlaması yok** ayarı önerilir.
+
+Tuş iki yoldan dinlenir: etkin `MediaSession` (`HEADSETHOOK` / `MEDIA_PLAY_PAUSE`) ve
+yedek olarak `ACTION_MEDIA_BUTTON` yayın alıcısı (`voice/VoiceButtonReceiver.kt`).
+Bazı OEM'ler tuşu oturuma değil yayına gönderir; aynı jest iki yoldan da gelirse
+servis 400 ms içindeki ikinciyi yutar. Telefonun **varsayılan asistanı** kulaklık
+tuşuna atanmışsa (Ayarlar → Asistan ve ses → kulaklık tuşu) tek basış asistanı
+açabilir; bu durumda asistandan bu kısayolu kaldırın veya uygulamayı asistan olarak
+seçmeyin.
+
 ## Kimlik doğrulama
 
 OpenCode API'si HTTP Basic auth kullanır:

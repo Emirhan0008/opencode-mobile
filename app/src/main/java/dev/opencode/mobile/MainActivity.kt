@@ -87,6 +87,35 @@ class MainActivity : ComponentActivity() {
             )
         }
     }
+
+    /**
+     * Sesli komut açıldığında gerekli çalışma zamanı izinleri. Ekran kilitliyken
+     * mikrofon ve kulaklık tuşu için ikisi de zorunlu; verilmezse servis kayıt
+     * açamaz ve kulaklık tuşu sessizce çalışmaz.
+     */
+    fun requestVoicePermissions() {
+        val wanted = mutableListOf<String>()
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            wanted += Manifest.permission.RECORD_AUDIO
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
+            ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            wanted += Manifest.permission.BLUETOOTH_CONNECT
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            wanted += Manifest.permission.POST_NOTIFICATIONS
+        }
+        if (wanted.isNotEmpty()) {
+            ActivityCompat.requestPermissions(this, wanted.toTypedArray(), 1002)
+        }
+    }
 }
 
 @Composable
@@ -130,6 +159,20 @@ private fun Root(
     val quotaError by vm.quotaError.collectAsState()
     val quotaLoading by vm.quotaLoading.collectAsState()
     val quotaBadge by vm.quotaBadge.collectAsState()
+    val voiceEnabled by vm.voiceEnabled.collectAsState()
+    val voiceConfirm by vm.voiceConfirm.collectAsState()
+    val voiceAutoSummary by vm.voiceAutoSummary.collectAsState()
+    val voiceName by vm.voiceName.collectAsState()
+    val evrenBaseUrl by vm.evrenBaseUrl.collectAsState()
+    val evrenAsrSet by vm.evrenAsrSet.collectAsState()
+    val evrenTtsSet by vm.evrenTtsSet.collectAsState()
+    val evrenSumSet by vm.evrenSumSet.collectAsState()
+    val voiceTestResult by vm.voiceTestResult.collectAsState()
+    val voiceTesting by vm.voiceTesting.collectAsState()
+    val activity = androidx.compose.ui.platform.LocalContext.current
+    androidx.compose.runtime.LaunchedEffect(voiceEnabled) {
+        if (voiceEnabled) (activity as? MainActivity)?.requestVoicePermissions()
+    }
     var connectError by remember { mutableStateOf<String?>(null) }
     var connecting by remember { mutableStateOf(false) }
 
@@ -240,6 +283,25 @@ private fun Root(
             onToggleQuotaBadge = { vm.setQuotaBadge(it) },
             onToggleTheme = { vm.setDarkTheme(!dark) },
             onOpenTelegram = vm::openTelegram,
+            voiceEnabled = voiceEnabled,
+            voiceConfirm = voiceConfirm,
+            voiceAutoSummary = voiceAutoSummary,
+            voiceName = voiceName,
+            evrenBaseUrl = evrenBaseUrl,
+            evrenAsrSet = evrenAsrSet,
+            evrenTtsSet = evrenTtsSet,
+            evrenSumSet = evrenSumSet,
+            voiceTestResult = voiceTestResult,
+            voiceTesting = voiceTesting,
+            onToggleVoice = vm::setVoiceEnabled,
+            onToggleVoiceConfirm = vm::setVoiceConfirm,
+            onToggleVoiceAutoSummary = vm::setVoiceAutoSummary,
+            onChangeVoiceName = vm::setVoiceName,
+            onChangeEvrenBase = vm::setEvrenBaseUrl,
+            onChangeAsrKey = vm::setEvrenAsrKey,
+            onChangeTtsKey = vm::setEvrenTtsKey,
+            onChangeSumKey = vm::setEvrenSumKey,
+            onTestVoice = vm::testVoiceConnection,
             onBack = vm::closeSettings,
         )
 

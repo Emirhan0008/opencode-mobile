@@ -23,11 +23,17 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -56,6 +62,26 @@ fun SettingsScreen(
     onToggleQuotaBadge: (Boolean) -> Unit,
     onToggleTheme: (Boolean) -> Unit,
     onOpenTelegram: () -> Unit = {},
+    // ---- sesli komut ----
+    voiceEnabled: Boolean = false,
+    voiceConfirm: Boolean = true,
+    voiceAutoSummary: Boolean = true,
+    voiceName: String = "deniz",
+    evrenBaseUrl: String = "",
+    evrenAsrSet: Boolean = false,
+    evrenTtsSet: Boolean = false,
+    evrenSumSet: Boolean = false,
+    voiceTestResult: String? = null,
+    voiceTesting: Boolean = false,
+    onToggleVoice: (Boolean) -> Unit = {},
+    onToggleVoiceConfirm: (Boolean) -> Unit = {},
+    onToggleVoiceAutoSummary: (Boolean) -> Unit = {},
+    onChangeVoiceName: (String) -> Unit = {},
+    onChangeEvrenBase: (String) -> Unit = {},
+    onChangeAsrKey: (String) -> Unit = {},
+    onChangeTtsKey: (String) -> Unit = {},
+    onChangeSumKey: (String) -> Unit = {},
+    onTestVoice: () -> Unit = {},
     onBack: () -> Unit,
 ) {
     Column(Modifier.fillMaxSize().background(Oc.bg)) {
@@ -128,6 +154,91 @@ fun SettingsScreen(
                 )
             }
 
+            SettingsSection("SESLİ KOMUT") {
+                SettingsSwitchRow(
+                    title = "Sesli komut",
+                    subtitle = "Ekran kilitliyken kulaklık tuşuyla konuş → teyit → oturum seç → yanıtı dinle",
+                    checked = voiceEnabled,
+                    enabled = true,
+                    onCheckedChange = onToggleVoice,
+                )
+                SettingsSwitchRow(
+                    title = "Duyduğunu sesli teyit et",
+                    subtitle = "Prompt gönderilmeden önce ne anladığını okur",
+                    checked = voiceConfirm,
+                    enabled = voiceEnabled,
+                    onCheckedChange = onToggleVoiceConfirm,
+                )
+                SettingsSwitchRow(
+                    title = "Yanıtı sesli özetle",
+                    subtitle = "Tur bitince modelin sana yazdığı metni özetleyip okur",
+                    checked = voiceAutoSummary,
+                    enabled = voiceEnabled,
+                    onCheckedChange = onToggleVoiceAutoSummary,
+                )
+
+                // Ses seçimi: dokununca sıradaki sese geçer (deniz/ece/emre/kaan).
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(4.dp))
+                        .clickable(enabled = voiceEnabled) {
+                            val voices = listOf("deniz", "ece", "emre", "kaan")
+                            val i = voices.indexOf(voiceName).coerceAtLeast(0)
+                            onChangeVoiceName(voices[(i + 1) % voices.size])
+                        }
+                        .padding(vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Ses", color = if (voiceEnabled) Oc.text else Oc.dim, style = MaterialTheme.typography.bodyLarge)
+                        Text("VoxCPM2 · dokununca değişir", color = Oc.dim, style = MaterialTheme.typography.bodySmall)
+                    }
+                    Spacer(Modifier.width(12.dp))
+                    Text(voiceName, color = Oc.accent, style = MaterialTheme.typography.bodyLarge)
+                }
+
+                VoiceKeyField(
+                    label = "EVREN adresi",
+                    value = evrenBaseUrl,
+                    placeholder = "https://evren-llmapi.ssyz.org.tr",
+                    onCommit = onChangeEvrenBase,
+                )
+                VoiceKeyField(
+                    label = "Konuşma→metin anahtarı",
+                    saved = evrenAsrSet,
+                    placeholder = "qwen3-asr-1.7b anahtarı",
+                    onCommit = onChangeAsrKey,
+                )
+                VoiceKeyField(
+                    label = "Metin→ses anahtarı",
+                    saved = evrenTtsSet,
+                    placeholder = "voxcpm2 anahtarı",
+                    onCommit = onChangeTtsKey,
+                )
+                VoiceKeyField(
+                    label = "Özet anahtarı",
+                    saved = evrenSumSet,
+                    placeholder = "qwen3.8-flash-next anahtarı",
+                    onCommit = onChangeSumKey,
+                )
+
+                OutlinedButton(
+                    onClick = onTestVoice,
+                    enabled = !voiceTesting,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text(if (voiceTesting) "… deneniyor" else "▸ Bağlantıyı test et")
+                }
+                if (voiceTestResult != null) {
+                    Text(
+                        if (voiceTestResult.isEmpty()) "Bağlantı tamam ✓" else voiceTestResult,
+                        color = if (voiceTestResult.isEmpty()) Oc.accent else Oc.err,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+            }
+
             SettingsSection("GÖRÜNÜM") {
                 SettingsSwitchRow(
                     title = "Koyu tema",
@@ -167,6 +278,52 @@ fun SettingsScreen(
                     Spacer(Modifier.width(12.dp))
                     Text("→", color = Oc.accent, style = MaterialTheme.typography.titleMedium)
                 }
+            }
+        }
+    }
+}
+
+/**
+ * Sesli komut için tek satırlık alan. Anahtarlar HİÇBİR ZAMAN geri okunmaz:
+ * [saved] true ise kutu boş görünür ve "kayıtlı ✓" ipucu verir — yeni değer
+ * yazılıp odak dışına çıkılınca kaydedilir. Boş gönderim kaydı SİLMEZ; silmek
+ * için "temizle" düğmesi kullanılır.
+ */
+@Composable
+private fun VoiceKeyField(
+    label: String,
+    value: String = "",
+    saved: Boolean = false,
+    placeholder: String = "",
+    onCommit: (String) -> Unit,
+) {
+    var text by remember(value) { mutableStateOf(value) }
+    OutlinedTextField(
+        value = text,
+        onValueChange = {
+            text = it
+            // Adres alanı her tuşta kaydedilir (boş bırakılırsa varsayılana döner).
+            if (label == "EVREN adresi") onCommit(it)
+        },
+        label = { Text(label) },
+        placeholder = { Text(if (saved) "kayıtlı ✓ — değiştirmek için yaz" else placeholder) },
+        modifier = Modifier.fillMaxWidth(),
+        singleLine = true,
+        colors = ocFieldColors(),
+        trailingIcon = if (saved && label != "EVREN adresi") {
+            {
+                TextButton(onClick = { text = ""; onCommit("") }) { Text("temizle", color = Oc.err) }
+            }
+        } else {
+            null
+        },
+    )
+    // Anahtar alanları: odak dışına çıkınca (veya yazma bitince) kaydet.
+    if (label != "EVREN adresi") {
+        androidx.compose.runtime.LaunchedEffect(text) {
+            if (text.isNotBlank()) {
+                kotlinx.coroutines.delay(700)
+                onCommit(text)
             }
         }
     }

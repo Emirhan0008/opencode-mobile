@@ -45,6 +45,16 @@ class Settings(private val context: Context) {
     private val keyTelegramStatusUrl = stringPreferencesKey("telegram_status_url")
     private val keyShutdownSession = stringPreferencesKey("shutdown_session")
 
+    // ---- sesli komut (voice) ----
+    private val keyVoiceEnabled = booleanPreferencesKey("voice_enabled")
+    private val keyVoiceConfirm = booleanPreferencesKey("voice_confirm")
+    private val keyVoiceAutoSummary = booleanPreferencesKey("voice_auto_summary")
+    private val keyVoiceName = stringPreferencesKey("voice_name")
+    private val keyEvrenBase = stringPreferencesKey("evren_base")
+    private val keyEvrenAsr = stringPreferencesKey("evren_asr_key")
+    private val keyEvrenTts = stringPreferencesKey("evren_tts_key")
+    private val keyEvrenSum = stringPreferencesKey("evren_sum_key")
+
     private val json = Json { ignoreUnknownKeys = true }
 
     /**
@@ -130,6 +140,40 @@ class Settings(private val context: Context) {
      */
     val shutdownSession: Flow<String> =
         context.dataStore.data.map { prefs -> prefs[keyShutdownSession].orEmpty() }
+
+    // ------------------------------------------------------------------ sesli komut
+
+    /** Sesli komut servisi (kulaklık tuşu → STT → onay → prompt → özet) açık mı. */
+    val voiceEnabled: Flow<Boolean> =
+        context.dataStore.data.map { prefs -> prefs[keyVoiceEnabled] ?: false }
+
+    /** Yazılan prompt sesli geri okunsun mu (yanlış anlamayı tespit için). */
+    val voiceConfirm: Flow<Boolean> =
+        context.dataStore.data.map { prefs -> prefs[keyVoiceConfirm] ?: true }
+
+    /** Tur bitince çıktı özetlenip sesli okunsun mu. */
+    val voiceAutoSummary: Flow<Boolean> =
+        context.dataStore.data.map { prefs -> prefs[keyVoiceAutoSummary] ?: true }
+
+    /** VoxCPM2 sesi: deniz / ece / emre / kaan. */
+    val voiceName: Flow<String> =
+        context.dataStore.data.map { prefs -> prefs[keyVoiceName] ?: DEFAULT_VOICE }
+
+    /** EVREN API taban adresi. */
+    val evrenBaseUrl: Flow<String> =
+        context.dataStore.data.map { prefs -> prefs[keyEvrenBase] ?: DEFAULT_EVREN_BASE }
+
+    /** Konuşma→metin anahtarı (qwen3-asr-1.7b'ye kısıtlı). Şifreli saklanır. */
+    val evrenAsrKey: Flow<String> =
+        context.dataStore.data.map { prefs -> SecurePrefs.decrypt(prefs[keyEvrenAsr].orEmpty()) }
+
+    /** Metin→ses anahtarı (voxcpm2'ye kısıtlı). Şifreli saklanır. */
+    val evrenTtsKey: Flow<String> =
+        context.dataStore.data.map { prefs -> SecurePrefs.decrypt(prefs[keyEvrenTts].orEmpty()) }
+
+    /** Özet anahtarı (qwen3.8-flash-next'e kısıtlı). Şifreli saklanır. */
+    val evrenSumKey: Flow<String> =
+        context.dataStore.data.map { prefs -> SecurePrefs.decrypt(prefs[keyEvrenSum].orEmpty()) }
 
     /** Eski kullanım: tek bağlantıyı kaydeder (profillerin dışında). */
     suspend fun save(baseUrl: String, token: String) {
@@ -249,6 +293,49 @@ class Settings(private val context: Context) {
         }
     }
 
+    // ------------------------------------------------------------ sesli komut
+
+    suspend fun setVoiceEnabled(enabled: Boolean) {
+        context.dataStore.edit { prefs -> prefs[keyVoiceEnabled] = enabled }
+    }
+
+    suspend fun setVoiceConfirm(enabled: Boolean) {
+        context.dataStore.edit { prefs -> prefs[keyVoiceConfirm] = enabled }
+    }
+
+    suspend fun setVoiceAutoSummary(enabled: Boolean) {
+        context.dataStore.edit { prefs -> prefs[keyVoiceAutoSummary] = enabled }
+    }
+
+    suspend fun setVoiceName(name: String) {
+        context.dataStore.edit { prefs -> prefs[keyVoiceName] = name.trim().ifBlank { DEFAULT_VOICE } }
+    }
+
+    suspend fun setEvrenBaseUrl(url: String) {
+        context.dataStore.edit { prefs ->
+            prefs[keyEvrenBase] = url.trim().trimEnd('/').ifBlank { DEFAULT_EVREN_BASE }
+        }
+    }
+
+    /** Anahtarlar AES-GCM ile şifrelenerek saklanır; boş değer kaydı siler. */
+    suspend fun setEvrenAsrKey(key: String) {
+        context.dataStore.edit { prefs ->
+            if (key.isBlank()) prefs.remove(keyEvrenAsr) else prefs[keyEvrenAsr] = SecurePrefs.encrypt(key.trim())
+        }
+    }
+
+    suspend fun setEvrenTtsKey(key: String) {
+        context.dataStore.edit { prefs ->
+            if (key.isBlank()) prefs.remove(keyEvrenTts) else prefs[keyEvrenTts] = SecurePrefs.encrypt(key.trim())
+        }
+    }
+
+    suspend fun setEvrenSumKey(key: String) {
+        context.dataStore.edit { prefs ->
+            if (key.isBlank()) prefs.remove(keyEvrenSum) else prefs[keyEvrenSum] = SecurePrefs.encrypt(key.trim())
+        }
+    }
+
     private fun decodeProfiles(raw: String?): List<Profile> {
         if (raw.isNullOrBlank()) return emptyList()
         return runCatching {
@@ -280,5 +367,14 @@ class Settings(private val context: Context) {
 
         /** Kurulu Telegram köprüsünün botu — kullanıcı değiştirene kadar varsayılan. */
         const val DEFAULT_TELEGRAM_BOT = "Opencode_0008_Bot"
+
+        /** EVREN API taban adresi (OpenAI uyumlu + ses uçları). */
+        const val DEFAULT_EVREN_BASE = "https://evren-llmapi.ssyz.org.tr"
+
+        /** VoxCPM2 hazır seslerinden varsayılan. */
+        const val DEFAULT_VOICE = "deniz"
+
+        /** Seçilebilir VoxCPM2 sesleri. */
+        val VOICES = listOf("deniz", "ece", "emre", "kaan")
     }
 }

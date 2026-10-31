@@ -19,6 +19,8 @@ import dev.opencode.mobile.net.str
 import dev.opencode.mobile.net.text
 import dev.opencode.mobile.notify.Notifier
 import dev.opencode.mobile.sync.WatchService
+import dev.opencode.mobile.voice.EvrenClient
+import dev.opencode.mobile.voice.VoiceService
 import java.io.IOException
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.Dispatchers
@@ -288,6 +290,41 @@ class AppViewModel(
     private val _ensuringShutdownSession = MutableStateFlow(false)
     val ensuringShutdownSession: StateFlow<Boolean> = _ensuringShutdownSession.asStateFlow()
 
+    // ------------------------------------------------------------------ sesli komut
+
+    /** Sesli komut servisi açık mı (kulaklık tuşu → STT → onay → prompt → özet). */
+    private val _voiceEnabled = MutableStateFlow(false)
+    val voiceEnabled: StateFlow<Boolean> = _voiceEnabled.asStateFlow()
+
+    private val _voiceConfirm = MutableStateFlow(true)
+    val voiceConfirm: StateFlow<Boolean> = _voiceConfirm.asStateFlow()
+
+    private val _voiceAutoSummary = MutableStateFlow(true)
+    val voiceAutoSummary: StateFlow<Boolean> = _voiceAutoSummary.asStateFlow()
+
+    private val _voiceName = MutableStateFlow("deniz")
+    val voiceName: StateFlow<String> = _voiceName.asStateFlow()
+
+    private val _evrenBaseUrl = MutableStateFlow("")
+    val evrenBaseUrl: StateFlow<String> = _evrenBaseUrl.asStateFlow()
+
+    /** Anahtarlar ekranda GÖSTERİLMEZ; yalnızca "dolu mu" bilgisi tutulur. */
+    private val _evrenAsrSet = MutableStateFlow(false)
+    val evrenAsrSet: StateFlow<Boolean> = _evrenAsrSet.asStateFlow()
+
+    private val _evrenTtsSet = MutableStateFlow(false)
+    val evrenTtsSet: StateFlow<Boolean> = _evrenTtsSet.asStateFlow()
+
+    private val _evrenSumSet = MutableStateFlow(false)
+    val evrenSumSet: StateFlow<Boolean> = _evrenSumSet.asStateFlow()
+
+    /** "Bağlantıyı test et" sonucu: null = denenmedi, "" = başarılı, aksi hâlde hata. */
+    private val _voiceTestResult = MutableStateFlow<String?>(null)
+    val voiceTestResult: StateFlow<String?> = _voiceTestResult.asStateFlow()
+
+    private val _voiceTesting = MutableStateFlow(false)
+    val voiceTesting: StateFlow<Boolean> = _voiceTesting.asStateFlow()
+
     init {
         viewModelScope.launch {
             settings.connection.collect { conn ->
@@ -354,6 +391,34 @@ class AppViewModel(
         }
         viewModelScope.launch {
             settings.shutdownSession.collect { _shutdownSessionId.value = it }
+        }
+        viewModelScope.launch {
+            settings.voiceConfirm.collect { _voiceConfirm.value = it }
+        }
+        viewModelScope.launch {
+            settings.voiceAutoSummary.collect { _voiceAutoSummary.value = it }
+        }
+        viewModelScope.launch {
+            settings.voiceName.collect { _voiceName.value = it }
+        }
+        viewModelScope.launch {
+            settings.evrenBaseUrl.collect { _evrenBaseUrl.value = it }
+        }
+        viewModelScope.launch {
+            settings.evrenAsrKey.collect { _evrenAsrSet.value = it.isNotBlank() }
+        }
+        viewModelScope.launch {
+            settings.evrenTtsKey.collect { _evrenTtsSet.value = it.isNotBlank() }
+        }
+        viewModelScope.launch {
+            settings.evrenSumKey.collect { _evrenSumSet.value = it.isNotBlank() }
+        }
+        viewModelScope.launch {
+            // Ana anahtar: açılınca ön plan servisini başlat, kapanınca durdur.
+            settings.voiceEnabled.collect { enabled ->
+                _voiceEnabled.value = enabled
+                if (enabled) VoiceService.start(appContext) else VoiceService.stop(appContext)
+            }
         }
     }
 
@@ -506,6 +571,71 @@ class AppViewModel(
         viewModelScope.launch { settings.setQuotaBadge(enabled) }
         // Şerit ilk kez açılıyorsa veriyi hemen getir.
         if (enabled) refreshQuota()
+    }
+
+    // ------------------------------------------------------------- sesli komut
+
+    /** Ana anahtar: sesli komut servisini açar/kapatır. */
+    fun setVoiceEnabled(enabled: Boolean) {
+        _voiceEnabled.value = enabled
+        viewModelScope.launch { settings.setVoiceEnabled(enabled) }
+        if (enabled) VoiceService.start(appContext) else VoiceService.stop(appContext)
+    }
+
+    fun setVoiceConfirm(enabled: Boolean) {
+        _voiceConfirm.value = enabled
+        viewModelScope.launch { settings.setVoiceConfirm(enabled) }
+    }
+
+    fun setVoiceAutoSummary(enabled: Boolean) {
+        _voiceAutoSummary.value = enabled
+        viewModelScope.launch { settings.setVoiceAutoSummary(enabled) }
+    }
+
+    fun setVoiceName(name: String) {
+        _voiceName.value = name
+        viewModelScope.launch { settings.setVoiceName(name) }
+    }
+
+    fun setEvrenBaseUrl(url: String) {
+        viewModelScope.launch { settings.setEvrenBaseUrl(url) }
+    }
+
+    fun setEvrenAsrKey(key: String) {
+        _evrenAsrSet.value = key.isNotBlank()
+        viewModelScope.launch { settings.setEvrenAsrKey(key) }
+    }
+
+    fun setEvrenTtsKey(key: String) {
+        _evrenTtsSet.value = key.isNotBlank()
+        viewModelScope.launch { settings.setEvrenTtsKey(key) }
+    }
+
+    fun setEvrenSumKey(key: String) {
+        _evrenSumSet.value = key.isNotBlank()
+        viewModelScope.launch { settings.setEvrenSumKey(key) }
+    }
+
+    /** EVREN anahtarlarını canlı dener: /v1/models yanıtı + özet modeli. */
+    fun testVoiceConnection() {
+        if (_voiceTesting.value) return
+        _voiceTesting.value = true
+        _voiceTestResult.value = null
+        viewModelScope.launch {
+            val base = settings.evrenBaseUrl.first()
+            val asr = settings.evrenAsrKey.first()
+            val tts = settings.evrenTtsKey.first()
+            val sum = settings.evrenSumKey.first()
+            if (asr.isBlank() || tts.isBlank()) {
+                _voiceTestResult.value = "ASR ve TTS anahtarları gerekli"
+                _voiceTesting.value = false
+                return@launch
+            }
+            val client = EvrenClient(base, asr, tts, sum)
+            val ok = withContext(Dispatchers.IO) { client.ping() }
+            _voiceTestResult.value = if (ok) "" else "Bağlantı başarısız — adres/anahtar?"
+            _voiceTesting.value = false
+        }
     }
 
     /** Ayarlar ekranını açar. */
