@@ -26,14 +26,20 @@ TUI estetiğinde: koyu zemin, monospace yazılar, kutulu paneller.
 - **Kapatma görevi**: ⏻ düğmesiyle "tüm işler bitince bilgisayarı kapat" görevi kurulur.
   Görev **seçtiğiniz oturuma** gözlemci prompt olarak gönderilir (hedef diyalogdan seçilir;
   "otomatik" ise uygulamanın kendisi için açtığı **⏻ Kapatma Gözcüsü** oturumu kullanılır —
-  bu oturum kalıcıdır, ilk açılışta çekirdek talimatla tohumlanır; yoksa "opencode-mobile"
-  oturumu, o da yoksa en son güncellenen oturum) ve bilgisayar
+  bu oturum kalıcıdır; yoksa eski plan hedefi) ve bilgisayar
   tarafında yürütülür: aktiflikler boşalana kadar bekler, sonra kapatma komutunu
   (`shutdown.exe /s /t 120`, istenirse `/f` ile programları zorla kapatarak) **yalnızca bir kez**
   çalıştırır. Telefon kapalı olsa da uygulama kapalı olsa da sürer; iptal edilebilir
   (gözlemci oturuma iptal mesajı + kesme gönderilir). Görev kuralları global `kapatma`
   skill'inde + `scripts/` yerine `~/.config/opencode/skills/kapatma/shutdown-watch.ps1`
   betiğindedir.
+  - Gözcü oturumunun **kalıcı sistem talimatı** vardır: OpenCode v2'nin oturum
+    `instruction entry` deposuna (`core` anahtarı, `/api/experimental/session/{id}/instructions/entries`)
+    yazılır. Sohbet mesajı değildir — geçmişte görünmez, compaction/temizlikten
+    etkilenmez, her turda sistem bağlamına enjekte edilir. Böylece gözcü oturumu
+    ne yapacağını sohbetten değil çekirdekten bilir; görev mesajı yalnızca tek
+    komut satırı taşır. Talimat metni `scripts/seed-shutdown-session.mjs` ile
+    aynıdır; elle tohumlamak için `node scripts/seed-shutdown-session.mjs`.
 - **Uzun basma menüleri**:
   - Oturum satırı: başlık/ID kopyalama, yeniden adlandırma, çoğaltma (fork), silme (onaylı).
   - Mesaj kartı: metni kopyalama, yanıta alıntı olarak ekleme, o noktaya kadar geri alma

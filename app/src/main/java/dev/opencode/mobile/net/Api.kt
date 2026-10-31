@@ -78,6 +78,11 @@ class Api(baseUrl: String, private val token: String) {
         execute(builder(path).patch(payload).build())
     }
 
+    suspend fun put(path: String, body: JsonElement? = null): JsonElement = withContext(Dispatchers.IO) {
+        val payload = (body?.toString() ?: "{}").toRequestBody("application/json".toMediaType())
+        execute(builder(path).put(payload).build())
+    }
+
     private fun execute(request: Request, on: OkHttpClient = client): JsonElement {
         on.newCall(request).execute().use { res ->
             val text = res.body?.string().orEmpty()
@@ -120,6 +125,20 @@ class Api(baseUrl: String, private val token: String) {
 
     suspend fun prompt(id: String, text: String): JsonElement =
         post("/api/session/$id/prompt", buildJsonObject { put("text", text) })
+
+    /**
+     * Oturumun **kalıcı sistem talimatı** girdileri. Bunlar sohbet geçmişine
+     * yazılmaz; her turda sistem bağlamına enjekte edilir (compaction'dan etkilenmez).
+     */
+    suspend fun instructionEntries(id: String): List<JsonObject> =
+        get("/api/experimental/session/$id/instructions/entries").obj().arr("data").map { it.obj() }
+
+    /** Oturumun kalıcı sistem talimatı girdisini yazar (upsert). */
+    suspend fun putInstruction(id: String, key: String, value: String): JsonElement =
+        put(
+            "/api/experimental/session/$id/instructions/entries/$key",
+            buildJsonObject { put("value", value) },
+        )
 
     suspend fun interrupt(id: String): JsonElement = post("/api/session/$id/interrupt")
 

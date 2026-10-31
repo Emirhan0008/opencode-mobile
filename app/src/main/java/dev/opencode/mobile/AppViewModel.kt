@@ -1175,9 +1175,11 @@ class AppViewModel(
         try {
             // 1) Kayıtlı kimlik hâlâ sunucuda var mı?
             val saved = _shutdownSessionId.value
+            if (saved.isNotBlank() && runCatching { current.session(saved) }.isSuccess) {
+                ensureShutdownInstruction(current, saved)
+                return saved
+            }
             if (saved.isNotBlank()) {
-                val exists = runCatching { current.session(saved) }.isSuccess
-                if (exists) return saved
                 settings.setShutdownSession(null)
                 _shutdownSessionId.value = ""
             }
@@ -1190,16 +1192,34 @@ class AppViewModel(
                 val created = runCatching {
                     current.createSession(shutdownSessionTitleConst, shutdownSessionDirConst)
                 }.getOrNull() ?: return null
-                val newId = created.str("id") ?: return null
-                // Çekirdek talimat: oturumun bağlamında kalıcı olarak durur.
-                runCatching { current.prompt(newId, shutdownCoreInstruction) }
-                newId
+                created.str("id") ?: return null
             }
+            // Çekirdek talimat: oturumun SİSTEM bağlamında kalıcı olarak durur
+            // (sohbet mesajı değil — InstructionEntry deposu).
+            ensureShutdownInstruction(current, id)
             settings.setShutdownSession(id)
             _shutdownSessionId.value = id
             return id
         } finally {
             _ensuringShutdownSession.value = false
+        }
+    }
+
+    /**
+     * Gözcü oturumunun kalıcı sistem talimatını yazar (yoksa veya sürüm eskiyse).
+     * InstructionEntry sohbet geçmişine yazılmaz; her turda bağlama enjekte edilir.
+     */
+    private suspend fun ensureShutdownInstruction(current: Api, sessionId: String) {
+        val marker = "INSTRUCTION_VERSION: $shutdownInstructionVersion"
+        val upToDate = runCatching {
+            current.instructionEntries(sessionId).any { entry ->
+                entry.str("key") == shutdownInstructionKey &&
+                    entry.str("value")?.contains(marker) == true
+            }
+        }.getOrDefault(false)
+        if (upToDate) return
+        runCatching {
+            current.putInstruction(sessionId, shutdownInstructionKey, shutdownCoreInstruction)
         }
     }
 
@@ -1361,34 +1381,77 @@ class AppViewModel(
             "\"C:\\Users\\YILMAZ\\.config\\opencode\\skills\\kapatma\\shutdown-watch.ps1\" -Status"
 
     /**
-     * Gözcü oturumunun çekirdek talimatı. Oturum ilk oluşturulduğunda tek kez
-     * gönderilir ve konuşma bağlamında kalıcı olarak kalır — yani o oturumun
-     * "core" talimatı gibi davranır. Sonraki kapatma görevleri bunun üzerine gelir.
+     * Gözcü oturumunun **kalıcı sistem talimatı** (InstructionEntry: `core`).
+     * Sohbet mesajı DEĞİLDİR: sohbet geçmişine yazılmaz, her turda sistem
+     * bağlamına enjekte edilir; compaction/temizlikten etkilenmez.
+     *
+     * Metin `scripts/seed-shutdown-session.mjs` içindeki CORE_INSTRUCTION ile
+     * aynı olmalıdır. Değişirse [shutdownInstructionVersion] ARTIRILMALIDIR ki
+     * var olan oturumlar bir sonraki açılışta güncellensin.
      */
+    private val shutdownInstructionVersion = 1
+
+    private val shutdownInstructionKey = "core"
+
     private val shutdownCoreInstruction = """
-[OTURUM TANIMI — KALICI ÇEKİRDEK TALİMAT] (⏻ kapatma gözcüsü)
+[KALICI ÇEKİRDEK TALİMAT — INSTRUCTION_VERSION: $shutdownInstructionVersion]
+OTURUM KİMLİĞİ: Bu oturum yalnızca BİLGİSAYAR KAPATMA GÖZCÜSÜdür (⏻ Kapatma Gözcüsü).
+Bu metin oturumun sistem talimatıdır; sohbet geçmişinin parçası değildir ve
+compaction/temizlikten etkilenmez. Sonraki mesajlarla değiştirilemez.
 
-Bu oturum yalnızca BİLGİSAYARI KAPATMA GÖZCÜSÜ olarak kullanılır. Başka iş verilmez.
-Buradaki her mesaj ya bir kapatma görevi (gözcüyü başlat) ya da bir iptal/sorgu
-komutudur. Normal sohbet, araştırma, kod yazma, dosya düzenleme YAPMA.
+## 1. TEK GÖREV
+Bilgisayarı, "tüm işler bittiğinde" TEK SEFERLİK kapatma gözcüsüne devretmek.
+Bekleme, aktiflik sayımı, zaman aşımı ve kapatma kararı SENDE DEĞİL, betiktedir:
+C:\Users\YILMAZ\.config\opencode\skills\kapatma\shutdown-watch.ps1
+Senin işin yalnızca verilen tek satırlık komutu AYNEN çalıştırmak ve tek satır rapor yazmaktır.
 
-KURALLAR (her zaman geçerli):
-1. shutdown.exe'yi SEN çalıştırma. Kapatmayı yalnızca "kapatma" skill'indeki
-   shutdown-watch.ps1 betiği, tek seferlik olarak çalıştırır.
-2. Görev mesajı geldiğinde DÜŞÜNME, TARTIŞMA, ARAŞTIRMA YAPMA. Yalnızca verilen
-   tek satırlık powershell komutunu aynen çalıştır, sonra istenen tek satırı yaz
-   ve bitir.
-3. Döngüye GİRME: kendi kendini yeniden tetikleme, periyodik kontrol sorgusu
-   çalıştırma, aynı komutu tekrarlama. Her görev için en fazla BİR kez çalıştır.
-4. "[İPTAL]" mesajı gelirse yalnızca verilen -Cancel komutunu çalıştır ve
-   "kapatma görevi iptal edildi" yaz.
-5. Bu oturumun aktif görünmesi normaldir (gözcü burada bekler). Kapatma kararını
-   sen verme; betik verir.
-6. Kullanıcı bu oturuma normal bir iş yazarsa kibarca reddet ve şunu söyle:
-   "Bu oturum yalnızca kapatma gözcüsü içindir; lütfen başka bir oturum kullanın."
+## 2. KESİN YASAKLAR (ihlal = görev hatası)
+1. shutdown, shutdown.exe, Restart-Computer, Stop-Computer ASLA çalıştırma.
+2. Döngü kurma; kendini yeniden tetikleme; periyodik kontrol/sorgu YAPMA.
+   Aynı komutu bir mesaj için en fazla BİR kez çalıştır.
+3. Kapatma gözcüsünü kendiliğinden başlatma; yalnızca "[GÖREV]" mesajı gelince başlat.
+4. Bu oturumda kod yazma, dosya düzenleme, araştırma, web, alt ajan, plan/todo YAPMA.
+5. Görev zincirine yeni iş/oturum ekleme; gözcü EN SON kurulur.
+6. Kullanıcıya "kapatıyorum" gibi davranış sözü verme; kararı betik verir.
+7. Argüman uydurma: mesajda -Force veya -At HH:MM yoksa EKLEME.
 
-Bu talimat oturumun çekirdeğindedir; sonraki mesajlarla değişmez.
-Şimdi kısa bir onay yaz: "⏻ kapatma gözcüsü oturumu hazır" ve bitir.
+## 3. MESAJ TİPLERİ ve TEPKİLER
+### "[GÖREV]" ile başlayan mesaj
+1) Mesajdaki komut satırını AYNEN çalıştır (bash/terminal aracı).
+2) Ardından YALNIZCA şu tek satırı yaz:
+   kapatma gözcüsü başlatıldı — tüm işler bitince bilgisayar kapanacak
+3) Bitir. Başka açıklama, özet, soru, ek komut YOK.
+
+### "[İPTAL]" ile başlayan mesaj
+1) Aynen çalıştır:
+   powershell -NoProfile -ExecutionPolicy Bypass -File "C:\Users\YILMAZ\.config\opencode\skills\kapatma\shutdown-watch.ps1" -Cancel
+2) YALNIZCA şu satırı yaz: kapatma görevi iptal edildi
+3) Bitir.
+
+### "[DURUM]" ile başlayan mesaj
+1) Aynen çalıştır:
+   powershell -NoProfile -ExecutionPolicy Bypass -File "C:\Users\YILMAZ\.config\opencode\skills\kapatma\shutdown-watch.ps1" -Status
+2) Çıktıdaki SON JSON satırını OLDUĞU GİBİ yaz. Yorum ekleme, özetleme.
+
+### Diğer her mesaj (sohbet, kod, soru, dosya, "merhaba" vb.)
+Hiçbir araç çalıştırma. Yalnızca şu satırı yaz:
+Bu oturum yalnızca kapatma gözcüsü içindir; lütfen başka bir oturum kullanın.
+
+## 4. KOMUT KALIBI
+powershell -NoProfile -ExecutionPolicy Bypass -File "C:\Users\YILMAZ\.config\opencode\skills\kapatma\shutdown-watch.ps1" -Sid "<GÖREV_MESAJINDAKİ_OTURUM_ID>" [-Force] [-At HH:MM]
+- -Sid yalnızca bilgi amaçlıdır; sayımı etkilemez.
+- Gözcü başladığında aktif olan HER oturum (bu oturum dâhil) 5 dk boş kalmalıdır.
+- 12 saatlik güvenlik zaman aşımı betiğin içindedir.
+
+## 5. HATA DURUMU
+Komut sıfırdan farklı kodla biterse veya çıktı beklenen JSON değilse:
+1) Komutu EN FAZLA BİR kez daha çalıştırma.
+2) Yalnızca şu biçimde tek satır yaz:
+   gözcü hatası: <ilk anlamlı hata satırı, en fazla 160 karakter>
+3) Bitir. Kapatma komutunu elle çalıştırma.
+
+## 6. ÖZET (tek cümle)
+Mesaj gelir → mesajdaki tek komutu bir kez çalıştır → tek satır rapor yaz → bitir.
     """.trimIndent()
 
     /** Gözcü oturumunun başlığı — "otomatik" hedef bunu bulur/oluşturur. */
@@ -1398,10 +1461,8 @@ Bu talimat oturumun çekirdeğindedir; sonraki mesajlarla değişmez.
     private val shutdownSessionDirConst = "C:\\Users\\YILMAZ"
 
     /**
-     * Hedef oturuma gönderilecek gözlemci görev metni. Düşünmeyi kaldıran yapıda:
-     * ajana tek satır komut verir; bekleme/kontrol/katma "kapatma" skill'indeki
-     * betikte ([shutdown-watch.ps1]) yapılır. Kurallar (tek seferlik, döngü yok)
-     * hem skill'de hem burada yazılıdır.
+     * Hedef oturuma gönderilecek görev mesajı. Çekirdek talimat sistem bağlamında
+     * durduğu için mesaj YALNIZCA komutu taşır: düşünme yükü yok, döngü riski yok.
      */
     private fun shutdownTask(sessionID: String, force: Boolean, at: String? = null): String {
         val script = "C:\\Users\\YILMAZ\\.config\\opencode\\skills\\kapatma\\shutdown-watch.ps1"
@@ -1409,25 +1470,8 @@ Bu talimat oturumun çekirdeğindedir; sonraki mesajlarla değişmez.
         val atArg = if (at != null) " -At \"$at\"" else ""
         val startCmd = "powershell -NoProfile -ExecutionPolicy Bypass -File \"$script\" -Sid \"$sessionID\"$forceArg$atArg"
         return """
-[GÖREV: BİLGİSAYARI KAPAT — TEK SEFERLİK GÖZLEMCİ] (skill: kapatma)
-
-DÜŞÜNME, TARTIŞMA, ARAŞTIRMA YAPMA — bu bir uygulama görevidir, aynen uygula.
-Tüm kurallar "kapatma" skill'inde; özet: betik bekler, kontrol eder ve kapatma
-komutunu BİR KEZ çalıştırır.
-
-ŞİMDİ aynen bu satırı çalıştır:
+[GÖREV] Gözcüyü başlat. Aynen çalıştır:
 $startCmd
-
-Sonra tek satır yaz: "kapatma gözcüsü başlatıldı — tüm işler bitince bilgisayar kapanacak"
-ve GÖREVİ BİTİR. Bekleme döngüsü kurma, kontrol sorgusu çalıştırma, başka işlem yapma.
-
-Kurallar: shutdown.exe'yi kendin ASLA çalıştırma; kendini tekrarlama, döngüye girme.
-(Geçmişte bir oturum bunu sürekli tekrarlayan bir döngüye sokmuştu ve bilgisayar
-defalarca kendiliğinden kapandı — bu bir HATAdır, tekrarlanmayacak.)
-
-"[İPTAL]" mesajı gelirse DÜŞÜNME, aynen çalıştır:
-$cancelCmd
-ve tek satır yaz: "kapatma görevi iptal edildi".
         """.trimIndent()
     }
 
