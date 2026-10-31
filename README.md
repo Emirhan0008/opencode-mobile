@@ -25,7 +25,9 @@ TUI estetiğinde: koyu zemin, monospace yazılar, kutulu paneller.
 - **Kaydırma ile gezinme**: mesaj akışında sağa/sola kaydırınca önceki/sonraki oturuma geçilir.
 - **Kapatma görevi**: ⏻ düğmesiyle "tüm işler bitince bilgisayarı kapat" görevi kurulur.
   Görev **seçtiğiniz oturuma** gözlemci prompt olarak gönderilir (hedef diyalogdan seçilir;
-  "otomatik" ise "opencode-mobile" oturumu, yoksa en son güncellenen oturum) ve bilgisayar
+  "otomatik" ise uygulamanın kendisi için açtığı **⏻ Kapatma Gözcüsü** oturumu kullanılır —
+  bu oturum kalıcıdır, ilk açılışta çekirdek talimatla tohumlanır; yoksa "opencode-mobile"
+  oturumu, o da yoksa en son güncellenen oturum) ve bilgisayar
   tarafında yürütülür: aktiflikler boşalana kadar bekler, sonra kapatma komutunu
   (`shutdown.exe /s /t 120`, istenirse `/f` ile programları zorla kapatarak) **yalnızca bir kez**
   çalıştırır. Telefon kapalı olsa da uygulama kapalı olsa da sürer; iptal edilebilir

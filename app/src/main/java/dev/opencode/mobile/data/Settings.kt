@@ -43,6 +43,7 @@ class Settings(private val context: Context) {
     private val keyQueue = stringPreferencesKey("queue")
     private val keyTelegramBot = stringPreferencesKey("telegram_bot")
     private val keyTelegramStatusUrl = stringPreferencesKey("telegram_status_url")
+    private val keyShutdownSession = stringPreferencesKey("shutdown_session")
 
     private val json = Json { ignoreUnknownKeys = true }
 
@@ -121,6 +122,14 @@ class Settings(private val context: Context) {
     /** Telegram köprüsünün yerel durum ucu (örn. `http://192.168.1.93:49375/health`). */
     val telegramStatusUrl: Flow<String> =
         context.dataStore.data.map { prefs -> prefs[keyTelegramStatusUrl].orEmpty() }
+
+    /**
+     * Kapatma gözcüsü için ayrılmış oturum kimliği. "otomatik" hedef seçildiğinde
+     * rastgele bir oturum yerine BU oturum kullanılır; böylece görev hep aynı yerde
+     * durur ve o oturumun çekirdek talimatı kalıcı olur.
+     */
+    val shutdownSession: Flow<String> =
+        context.dataStore.data.map { prefs -> prefs[keyShutdownSession].orEmpty() }
 
     /** Eski kullanım: tek bağlantıyı kaydeder (profillerin dışında). */
     suspend fun save(baseUrl: String, token: String) {
@@ -230,6 +239,14 @@ class Settings(private val context: Context) {
     /** Telegram durum ucu adresini kaydeder. */
     suspend fun setTelegramStatusUrl(value: String) {
         context.dataStore.edit { prefs -> prefs[keyTelegramStatusUrl] = value.trim() }
+    }
+
+    /** Kapatma gözcüsü oturumunu kaydeder (null/boş = kayıt yok). */
+    suspend fun setShutdownSession(value: String?) {
+        context.dataStore.edit { prefs ->
+            if (value.isNullOrBlank()) prefs.remove(keyShutdownSession)
+            else prefs[keyShutdownSession] = value
+        }
     }
 
     private fun decodeProfiles(raw: String?): List<Profile> {

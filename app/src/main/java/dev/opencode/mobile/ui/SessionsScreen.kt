@@ -120,6 +120,8 @@ fun SessionsScreen(
     onCancelShutdown: () -> Unit,
     /** Plan varsa "HH:MM" (yoksa/şimdiyse null) — banner'da "en erken" göstergesi için. */
     shutdownAt: String? = null,
+    /** Kalıcı gözcü oturumu (varsa "otomatik" bunu kullanır). */
+    shutdownSessionId: String? = null,
     /** Gözcünün son canlılık durumu (bilinmiyorsa null). */
     watchStatus: WatchStatus? = null,
     onRefreshWatch: () -> Unit = {},
@@ -550,6 +552,7 @@ fun SessionsScreen(
                     sessions = state.sessions,
                     watchStatus = watchStatus,
                     onRefreshWatch = onRefreshWatch,
+                    shutdownSessionId = shutdownSessionId,
                     onArm = { force, targetId, at ->
                         showShutdown = false
                         onArmShutdown(force, targetId, at)
@@ -782,19 +785,26 @@ private fun SessionRow(
     }
 }
 
-/** Kapatma görevinin gönderileceği oturumu seçer (otomatik = uygulama seçer). */
+/** Kapatma görevinin gönderileceği oturumu seçer (otomatik = kalıcı gözcü oturumu). */
 @Composable
 private fun TargetPicker(
     sessions: List<JsonObject>,
     target: JsonObject?,
     onPick: (JsonObject?) -> Unit,
+    shutdownSessionId: String? = null,
 ) {
     var expanded by remember { mutableStateOf(false) }
     val candidates = sessions.filter { it.str("parentID") == null }
+    val dedicatedTitle = "⏻ Kapatma Gözcüsü"
+    val autoLabel = if (!shutdownSessionId.isNullOrBlank()) {
+        "$dedicatedTitle (otomatik · ayrılmış)"
+    } else {
+        "otomatik (gözcü oturumu oluşturulur)"
+    }
     Box {
         OutlinedButton(onClick = { expanded = true }) {
             Text(
-                target?.str("title") ?: "otomatik (“opencode-mobile” ya da en son güncellenen)",
+                target?.str("title") ?: autoLabel,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.widthIn(max = 240.dp),
@@ -802,7 +812,7 @@ private fun TargetPicker(
         }
         DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
             DropdownMenuItem(
-                text = { Text("otomatik") },
+                text = { Text(autoLabel) },
                 onClick = {
                     onPick(null)
                     expanded = false
@@ -834,6 +844,7 @@ private fun ShutdownDialog(
     sessions: List<JsonObject>,
     watchStatus: WatchStatus?,
     onRefreshWatch: () -> Unit,
+    shutdownSessionId: String? = null,
     onArm: (force: Boolean, targetId: String?, at: String?) -> Unit,
     onCancel: () -> Unit,
     onDismiss: () -> Unit,
@@ -928,6 +939,7 @@ private fun ShutdownDialog(
                         sessions = sessions,
                         target = target,
                         onPick = { target = it },
+                        shutdownSessionId = shutdownSessionId,
                     )
                     Spacer(Modifier.height(8.dp))
                     WatchStatusCard(status = watchStatus, onRefresh = onRefreshWatch)

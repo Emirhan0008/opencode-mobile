@@ -281,6 +281,13 @@ class AppViewModel(
     private val _telegramChecking = MutableStateFlow(false)
     val telegramChecking: StateFlow<Boolean> = _telegramChecking.asStateFlow()
 
+    /** Kapatma gözcüsü için ayrılmış oturum (varsa tüm gözcü işleri buraya gider). */
+    private val _shutdownSessionId = MutableStateFlow("")
+    val shutdownSessionId: StateFlow<String> = _shutdownSessionId.asStateFlow()
+
+    private val _ensuringShutdownSession = MutableStateFlow(false)
+    val ensuringShutdownSession: StateFlow<Boolean> = _ensuringShutdownSession.asStateFlow()
+
     init {
         viewModelScope.launch {
             settings.connection.collect { conn ->
@@ -344,6 +351,9 @@ class AppViewModel(
         }
         viewModelScope.launch {
             settings.telegramStatusUrl.collect { _telegramStatusUrl.value = it }
+        }
+        viewModelScope.launch {
+            settings.shutdownSession.collect { _shutdownSessionId.value = it }
         }
     }
 
@@ -1111,14 +1121,20 @@ class AppViewModel(
     fun armShutdown(force: Boolean, targetId: String? = null, at: String? = null) {
         val current = api ?: return
         viewModelScope.launch {
-            val id = if (!targetId.isNullOrBlank()) {
-                targetId
-            } else {
-                val sessions = runCatching { current.sessions(50) }.getOrDefault(emptyList())
-                val target =
-                    sessions.firstOrNull { it.str("title")?.contains("opencode-mobile", true) == true }
-                        ?: sessions.maxByOrNull { it.obj("time").num("updated") ?: 0.0 }
-                target?.str("id")
+            // Hedef çözümleme sırası:
+            //  1) açıkça seçilen oturum
+            //  2) kalıcı gözcü oturumu (yoksa oluşturulur)
+            //  3) son çare: "opencode-mobile" başlıklı / en son güncellenen
+            // Böylece "otomatik" artık rastgele bir çalışma oturumuna düşmez.
+            val id = when {
+                !targetId.isNullOrBlank() -> targetId
+                else -> ensureShutdownSession(current) ?: run {
+                    val sessions = runCatching { current.sessions(50) }.getOrDefault(emptyList())
+                    val target =
+                        sessions.firstOrNull { it.str("title")?.contains("opencode-mobile", true) == true }
+                            ?: sessions.maxByOrNull { it.obj("time").num("updated") ?: 0.0 }
+                    target?.str("id")
+                }
             }
             if (id == null) {
                 notify(41, "Kapatma görevi kurulamadı", "Hedef oturum bulunamadı.")
@@ -1143,6 +1159,59 @@ class AppViewModel(
                 .onFailure { e ->
                     notify(41, "Kapatma görevi gönderilemedi", e.message ?: "bilinmeyen hata")
                 }
+        }
+    }
+
+    // ------------------------------------------- kalıcı gözcü oturumu
+
+    /**
+     * Kapatma gözcüsü için ayrılmış oturumu döndürür; yoksa oluşturur ve
+     * çekirdek talimatıyla tohumlar. Tüm gözcü işleri (görev + `-Status`)
+     * hep bu oturuma gider; çalışma oturumlarına hiç bulaşmaz.
+     */
+    private suspend fun ensureShutdownSession(current: Api): String? {
+        if (_ensuringShutdownSession.value) return _shutdownSessionId.value.takeIf { it.isNotBlank() }
+        _ensuringShutdownSession.value = true
+        try {
+            // 1) Kayıtlı kimlik hâlâ sunucuda var mı?
+            val saved = _shutdownSessionId.value
+            if (saved.isNotBlank()) {
+                val exists = runCatching { current.session(saved) }.isSuccess
+                if (exists) return saved
+                settings.setShutdownSession(null)
+                _shutdownSessionId.value = ""
+            }
+            // 2) Aynı başlıkta oturum var mı? (uygulama yeniden kurulduysa)
+            val sessions = runCatching { current.sessions(50) }.getOrDefault(emptyList())
+            val existing = sessions.firstOrNull {
+                it.str("title")?.trim() == shutdownSessionTitleConst
+            }?.str("id")
+            val id = existing ?: run {
+                val created = runCatching {
+                    current.createSession(shutdownSessionTitleConst, shutdownSessionDirConst)
+                }.getOrNull() ?: return null
+                val newId = created.str("id") ?: return null
+                // Çekirdek talimat: oturumun bağlamında kalıcı olarak durur.
+                runCatching { current.prompt(newId, shutdownCoreInstruction) }
+                newId
+            }
+            settings.setShutdownSession(id)
+            _shutdownSessionId.value = id
+            return id
+        } finally {
+            _ensuringShutdownSession.value = false
+        }
+    }
+
+    /** "otomatik" hedef için kullanıcıya gösterilecek gözcü oturumu (yoksa null). */
+    fun shutdownSessionForUi(): String? = _shutdownSessionId.value.takeIf { it.isNotBlank() }
+
+    /** Gözcü oturumunu hazırlar (UI'dan çağrılır) ve kimliğini döndürür. */
+    fun prepareShutdownSession(onDone: (String?) -> Unit = {}) {
+        val current = api ?: return
+        viewModelScope.launch {
+            val id = ensureShutdownSession(current)
+            onDone(id)
         }
     }
 
@@ -1204,9 +1273,12 @@ class AppViewModel(
     private suspend fun shutdownTargetId(current: Api): String? {
         val fromPlan = _shutdownPlan.value?.split('|')?.getOrNull(1)?.takeIf { it.isNotBlank() }
         if (fromPlan != null) return fromPlan
-        val inMemory = _sessions.value.sessions.firstOrNull()?.str("id")
-        if (inMemory != null) return inMemory
-        return runCatching { current.sessions(1) }.getOrDefault(emptyList()).firstOrNull()?.str("id")
+        // Plan yoksa RASTGELE oturuma düşme: yalnızca kalıcı gözcü oturumu varsa onu kullan.
+        // (Eskiden listenin ilk oturumunu seçiyordu; `-Status` komutu kullanıcının
+        // çalışma oturumuna düşüp transkripti kirletiyordu.)
+        val dedicated = _shutdownSessionId.value.takeIf { it.isNotBlank() }
+        if (dedicated != null) return dedicated
+        return null
     }
 
     private fun parseStatusFromMessages(msgs: List<JsonObject>): WatchStatus? {
@@ -1287,6 +1359,43 @@ class AppViewModel(
     private val statusCmd =
         "powershell -NoProfile -ExecutionPolicy Bypass -File " +
             "\"C:\\Users\\YILMAZ\\.config\\opencode\\skills\\kapatma\\shutdown-watch.ps1\" -Status"
+
+    /**
+     * Gözcü oturumunun çekirdek talimatı. Oturum ilk oluşturulduğunda tek kez
+     * gönderilir ve konuşma bağlamında kalıcı olarak kalır — yani o oturumun
+     * "core" talimatı gibi davranır. Sonraki kapatma görevleri bunun üzerine gelir.
+     */
+    private val shutdownCoreInstruction = """
+[OTURUM TANIMI — KALICI ÇEKİRDEK TALİMAT] (⏻ kapatma gözcüsü)
+
+Bu oturum yalnızca BİLGİSAYARI KAPATMA GÖZCÜSÜ olarak kullanılır. Başka iş verilmez.
+Buradaki her mesaj ya bir kapatma görevi (gözcüyü başlat) ya da bir iptal/sorgu
+komutudur. Normal sohbet, araştırma, kod yazma, dosya düzenleme YAPMA.
+
+KURALLAR (her zaman geçerli):
+1. shutdown.exe'yi SEN çalıştırma. Kapatmayı yalnızca "kapatma" skill'indeki
+   shutdown-watch.ps1 betiği, tek seferlik olarak çalıştırır.
+2. Görev mesajı geldiğinde DÜŞÜNME, TARTIŞMA, ARAŞTIRMA YAPMA. Yalnızca verilen
+   tek satırlık powershell komutunu aynen çalıştır, sonra istenen tek satırı yaz
+   ve bitir.
+3. Döngüye GİRME: kendi kendini yeniden tetikleme, periyodik kontrol sorgusu
+   çalıştırma, aynı komutu tekrarlama. Her görev için en fazla BİR kez çalıştır.
+4. "[İPTAL]" mesajı gelirse yalnızca verilen -Cancel komutunu çalıştır ve
+   "kapatma görevi iptal edildi" yaz.
+5. Bu oturumun aktif görünmesi normaldir (gözcü burada bekler). Kapatma kararını
+   sen verme; betik verir.
+6. Kullanıcı bu oturuma normal bir iş yazarsa kibarca reddet ve şunu söyle:
+   "Bu oturum yalnızca kapatma gözcüsü içindir; lütfen başka bir oturum kullanın."
+
+Bu talimat oturumun çekirdeğindedir; sonraki mesajlarla değişmez.
+Şimdi kısa bir onay yaz: "⏻ kapatma gözcüsü oturumu hazır" ve bitir.
+    """.trimIndent()
+
+    /** Gözcü oturumunun başlığı — "otomatik" hedef bunu bulur/oluşturur. */
+    private val shutdownSessionTitleConst = "⏻ Kapatma Gözcüsü"
+
+    /** Gözcü oturumunun çalışma dizini (görev dosyalarla ilgilenmez). */
+    private val shutdownSessionDirConst = "C:\\Users\\YILMAZ"
 
     /**
      * Hedef oturuma gönderilecek gözlemci görev metni. Düşünmeyi kaldıran yapıda:

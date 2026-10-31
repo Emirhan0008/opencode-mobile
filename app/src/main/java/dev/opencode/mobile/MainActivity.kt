@@ -112,6 +112,7 @@ private fun Root(
     }
     val shutdownPlan by vm.shutdownPlan.collectAsState()
     val watchStatus by vm.watchStatus.collectAsState()
+    val shutdownSessionId by vm.shutdownSessionId.collectAsState()
     val telegramBot by vm.telegramBot.collectAsState()
     val telegramStatusUrl by vm.telegramStatusUrl.collectAsState()
     val telegramStatus by vm.telegramStatus.collectAsState()
@@ -208,6 +209,7 @@ private fun Root(
             onCancelShutdown = vm::cancelShutdown,
             shutdownAt = shutdownPlan?.split('|')?.getOrNull(2)?.takeIf { it != "-" },
             watchStatus = watchStatus,
+            shutdownSessionId = shutdownSessionId,
             onRefreshWatch = vm::refreshShutdownStatus,
             connState = connState,
             onReconnect = vm::reconnectNow,
