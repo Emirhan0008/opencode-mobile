@@ -64,6 +64,13 @@ class VoiceFlow(
     /** Okunan son özet — "tekrar oku" için yeniden özetlemeden kullanılır. */
     private var lastSummary: String? = null
 
+    /**
+     * Son yanıtın **ham** metni (özetlenmemiş). Takip sırasında "kritik
+     * çelişkiler hangileriydi" gibi bir soru sorulursa cevap özetten değil
+     * bu tam metinden çıkarılır.
+     */
+    private var lastRawAnswer: String? = null
+
     /** Aynı yanıt için kaç kez takip komutu dinlendiği (sonsuz döngü koruması). */
     private var followUps = 0
 
@@ -152,6 +159,8 @@ class VoiceFlow(
             onState("OpenCode bağlantısı yok")
             return
         }
+        // Yeni bir komut başlıyor: önceki yanıtın bağlamı artık geçerli değil.
+        if (attempt == 1) lastRawAnswer = null
 
         stage = Stage.LISTENING
         onState(if (attempt == 1) "dinliyorum…" else "tekrar dinliyorum…")
@@ -493,6 +502,64 @@ class VoiceFlow(
     /** "daha detaylı / uzun anlat / ayrıntılı" — ayrıntılı özet ister. */
     private fun parseDetail(text: String): Boolean = hasAny(normalize(text), DETAIL_WORDS)
 
+    /**
+     * Soru mu? Türkçede soru çoğu zaman soru ekiyle ya da soru sözcüğüyle
+     * kurulur; ikisi de yakalanır. Tek kelimelik gürültü ("ne") soru sayılmaz —
+     * en az iki kelime gerekir, yoksa yanlışlıkla LLM çağrısı yapılırdı.
+     */
+    private fun looksLikeQuestion(text: String): Boolean {
+        val tokens = normalize(text).split(" ").filter { it.isNotBlank() }
+        if (tokens.size < 2) return false
+        val prefixes = listOf(
+            "neyd", "neler", "nedir", "neyi", "neye", "ne ", "hang", "kaç", "kac",
+            "kim", "nasıl", "nasil", "neden", "niye", "nerede", "neresi", "kaçtane",
+        )
+        val exact = listOf("ne", "mi", "mı", "mu", "mü", "midir", "mıdır", "mudur", "müdür")
+        if (tokens.any { it in exact }) return true
+        if (tokens.any { tk -> prefixes.any { p -> tk.startsWith(p) } }) return true
+        val joined = tokens.joinToString(" ")
+        return joined.startsWith("ne ") || joined.startsWith("ned")
+    }
+
+    /**
+     * Takip sırasında sorulan soruyu yanıtlar. Bağlam, son yanıtın **ham**
+     * metnidir (özet değil) — böylece "özet çıkarırken atlanan" ayrıntılar da
+     * sorulabilir. Yanıt okunur ve mikrofon yeniden açılır; kullanıcı zincirleme
+     * soru sorabilir.
+     */
+    private suspend fun answerQuestion(api: Api, ev: EvrenClient, sessionId: String, question: String) {
+        val context = lastRawAnswer
+            ?: runCatching { api.assistantText(sessionId) }.getOrDefault("")
+        if (context.isBlank() || !ev.summaryConfigured()) {
+            followUps = 0
+            stage = Stage.IDLE
+            onState("soru için yanıt metni yok")
+            return
+        }
+        stage = Stage.WAITING
+        onState("soru: $question")
+        val reply = runCatching { ev.ask(question, context) }
+            .getOrElse { e ->
+                Log.w(TAG, "soru yanıtı hatası: ${e.message}")
+                onState("soru hatası: ${e.message}")
+                followUps = 0
+                stage = Stage.IDLE
+                return
+            }
+            .trim()
+        if (reply.isBlank()) {
+            followUps = 0
+            stage = Stage.IDLE
+            return
+        }
+        lastSummary = reply
+        Log.d(TAG, "soru yanıtı (${reply.length} krk): ${reply.take(200)}")
+        onState("cevap: $reply")
+        runCatching { settings.setVoiceLastSpoken(reply) }
+        say(reply, ev)
+        followUp(api, ev, sessionId)
+    }
+
     /** "yeni komut / yeni istek / başka bir şey" — yeni sesli komut başlatır. */
     private fun parseNewCommand(text: String): Boolean = hasAny(normalize(text), NEW_WORDS)
 
@@ -514,7 +581,7 @@ class VoiceFlow(
 
     private companion object {
         const val TAG = "VoiceFlow"
-        const val MAX_FOLLOW_UPS = 2
+        const val MAX_FOLLOW_UPS = 4
 
         /**
          * Bu sınırların altındaki **düz yazı** yanıtlar özetlenmeden doğrudan
@@ -827,6 +894,7 @@ class VoiceFlow(
             say("Henüz bir yanıt yok.", client)
             return
         }
+        lastRawAnswer = answer
 
         // Doğrudan okuma kuralı: yanıt **konuşmaya uygun düz yazıysa** özet
         // çıkarmaya gerek yok. Önceden 320 karakter sınırı yüzünden 600-700
@@ -920,10 +988,7 @@ class VoiceFlow(
         onState("takip: $answer")
 
         when {
-            parseDetail(answer) -> {
-                say("Daha ayrıntılı okuyorum.", ev)
-                speakSummary(api, ev, sessionId, detail = true)
-            }
+            // "tekrar oku / ne dedin" önce: bunlar soru sözcüğü içerebilir.
             parseRepeat(answer) -> {
                 val again = lastSummary
                 if (again.isNullOrBlank()) speakSummary(api, ev, sessionId)
@@ -931,6 +996,13 @@ class VoiceFlow(
                     say(again, ev)
                     followUp(api, ev, sessionId)
                 }
+            }
+            // Soru: "kritik olan çelişkiler neydi", "hangileri düşük düzeyde"…
+            // Özet değil, yanıtın TAMAMI bağlam olarak modele verilir.
+            looksLikeQuestion(answer) -> answerQuestion(api, ev, sessionId, answer)
+            parseDetail(answer) -> {
+                say("Daha ayrıntılı okuyorum.", ev)
+                speakSummary(api, ev, sessionId, detail = true)
             }
             parseNewCommand(answer) -> {
                 followUps = 0

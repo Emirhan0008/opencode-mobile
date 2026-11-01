@@ -163,6 +163,58 @@ class EvrenClient(
         }
     }
 
+    /**
+     * Özetlenmiş bir yanıt hakkında **sonradan sorulan** soruyu, yanıtın
+     * tamamına bakarak yanıtlar. Özet metni yerine ham yanıt verilir; böylece
+     * özette yer almayan ayrıntılar da (ör. "kritik çelişkiler hangileriydi")
+     * kaynaktan çıkarılabilir. Yanıt sesli okunacağı için kısa ve düz yazıdır.
+     */
+    suspend fun ask(question: String, context: String): String = withContext(Dispatchers.IO) {
+        require(sumKey.isNotBlank()) { "Özet anahtarı yok" }
+        val instruction =
+            "Sana verilen METIN, bir yazilim asistaninin kullaniciya yazdigi yanitin tamamidir. " +
+                "Kullanicinin SORU'suna YALNIZCA bu metne dayanarak yanit ver. " +
+                "Metinde olmayan bir sey sorulursa 'Bu bilgi metinde yok' de, tahmin etme. " +
+                "Yanit sesli okunacak: duz yaz, markdown/madde/baslik/kod KULLANMA, en fazla 6 cumle. " +
+                "Turkce."
+        val payload = buildJsonObject {
+            put("model", MODEL_SUMMARY)
+            put("reasoning_effort", "none")
+            put("temperature", 0.2)
+            put(
+                "messages",
+                buildJsonArray {
+                    add(
+                        buildJsonObject {
+                            put("role", "system")
+                            put("content", instruction)
+                        },
+                    )
+                    add(
+                        buildJsonObject {
+                            put("role", "user")
+                            put(
+                                "content",
+                                "METIN:\n${context.take(24_000)}\n\nSORU: $question",
+                            )
+                        },
+                    )
+                },
+            )
+        }
+        val req = Request.Builder()
+            .url("$base/v1/chat/completions")
+            .header("Authorization", "Bearer $sumKey")
+            .header("Content-Type", "application/json")
+            .post(payload.toString().toRequestBody(JSON_MEDIA))
+            .build()
+        client.newCall(req).execute().use { res ->
+            val raw = res.body?.string().orEmpty()
+            if (!res.isSuccessful) throw VoiceException("Soru ${res.code}: ${raw.take(160)}")
+            parseContent(raw)
+        }
+    }
+
     private fun parseContent(raw: String): String {
         val obj: JsonObject = runCatching { json.parseToJsonElement(raw).jsonObject }.getOrNull()
             ?: throw VoiceException("Özet yanıtı çözülemedi")

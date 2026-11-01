@@ -119,8 +119,12 @@ Düzeltmeden sonra yeni cümle okunur ve onay yeniden beklenir.
      daha hızlı ve daha ucuz (600–700 karakterlik bir hikâye de doğrudan okunur),
    - yanıt daha uzunsa ya da yapısal içerik (kod/tablo/madde listesi) varsa kısa bir
      özete çevrilip okunur (özet anahtarı yoksa ham metin okunur).
-6. Okuma bitince mikrofon yeniden açılır ve **takip komutu** beklenir (en fazla 2 tur):
+6. Okuma bitince mikrofon yeniden açılır ve **takip komutu** beklenir (en fazla 4 tur):
    - **"tekrar oku" / "bir daha"** → son okunan metni yeniden okur (yeniden özetlemez),
+   - **herhangi bir soru** ("kritik olan çelişkiler neydi?", "hangileri düşük düzeydeydi?")
+     → soru, **özet metnine değil yanıtın tamamına** karşı yanıtlanır; özette atlanan
+     ayrıntılar da bu yolla sorulabilir. Cevap okunur, mikrofon yeniden açılır —
+     zincirleme soru sorulabilir. Metinde olmayan bir şey sorulursa "bu bilgi metinde yok" der,
    - **"daha detaylı" / "ayrıntılı" / "uzun anlat"** → ayrıntılı özet ister,
    - **"yeni komut" / "yeni istek" / "dinle"** → baştan yeni komut dinler,
    - **"tamam" / "teşekkürler" / "yeter"** → akışı kapatır.
