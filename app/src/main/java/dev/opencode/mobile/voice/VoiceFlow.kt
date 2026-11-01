@@ -587,12 +587,23 @@ class VoiceFlow(
             onState("özet hatası: ${e.message}")
             say("Özet çıkaramadım. Ham yanıtı okuyorum. ${answer.take(400)}", client)
             return
+        }.trim()
+        // Model boş metin döndürebiliyor (içerik yerine yalnızca düşünme).
+        // Boşsa hiç ses çıkmazdı — ham yanıtın başına düş.
+        if (summary.length < 3) {
+            Log.w(TAG, "özet boş döndü, ham yanıt okunuyor")
+            stage = Stage.IDLE
+            val raw = answer.replace(Regex("\\s+"), " ").take(500)
+            lastSummary = raw
+            onState("özet: $raw")
+            say(raw, client)
+        } else {
+            lastSummary = summary
+            stage = Stage.IDLE
+            Log.d(TAG, "özet (${summary.length} krk): ${summary.take(80)}")
+            onState("özet: $summary")
+            say(summary, client)
         }
-        lastSummary = summary
-        stage = Stage.IDLE
-        Log.d(TAG, "özet (${summary.length} krk): ${summary.take(80)}")
-        onState("özet: $summary")
-        say(summary, client)
         stage = Stage.IDLE
 
         // Okuma bitti: mikrofonu yeniden aç ve takip komutu bekle. Kullanıcı
