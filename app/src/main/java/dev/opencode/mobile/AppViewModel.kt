@@ -305,6 +305,10 @@ class AppViewModel(
     private val _voiceName = MutableStateFlow("deniz")
     val voiceName: StateFlow<String> = _voiceName.asStateFlow()
 
+    /** En son sesli okunan metin (özet ya da doğrudan okunan yanıt). */
+    private val _voiceLastSpoken = MutableStateFlow("")
+    val voiceLastSpoken: StateFlow<String> = _voiceLastSpoken.asStateFlow()
+
     private val _evrenBaseUrl = MutableStateFlow("")
     val evrenBaseUrl: StateFlow<String> = _evrenBaseUrl.asStateFlow()
 
@@ -400,6 +404,9 @@ class AppViewModel(
         }
         viewModelScope.launch {
             settings.voiceName.collect { _voiceName.value = it }
+        }
+        viewModelScope.launch {
+            settings.voiceLastSpoken.collect { _voiceLastSpoken.value = it }
         }
         viewModelScope.launch {
             settings.evrenBaseUrl.collect { _evrenBaseUrl.value = it }

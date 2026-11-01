@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -67,6 +68,8 @@ fun SettingsScreen(
     voiceConfirm: Boolean = true,
     voiceAutoSummary: Boolean = true,
     voiceName: String = "deniz",
+    /** En son sesli okunan metin — özet mi doğrudan yanıt mı olduğunu gösterir. */
+    voiceLastSpoken: String = "",
     evrenBaseUrl: String = "",
     evrenAsrSet: Boolean = false,
     evrenTtsSet: Boolean = false,
@@ -176,6 +179,28 @@ fun SettingsScreen(
                     enabled = voiceEnabled,
                     onCheckedChange = onToggleVoiceAutoSummary,
                 )
+                if (voiceLastSpoken.isNotBlank()) {
+                    Column(
+                        Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(Oc.panel)
+                            .padding(horizontal = 10.dp, vertical = 8.dp),
+                    ) {
+                        Text(
+                            "Son okunan",
+                            color = Oc.dim,
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            if (voiceLastSpoken.length > 400) voiceLastSpoken.take(400) + "…"
+                            else voiceLastSpoken,
+                            color = Oc.text,
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                    }
+                }
 
                 // Ses seçimi: dokununca sıradaki sese geçer (deniz/ece/emre/kaan).
                 Row(

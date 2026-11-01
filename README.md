@@ -113,12 +113,14 @@ Düzeltmeden sonra yeni cümle okunur ve onay yeniden beklenir.
 4. Prompt gönderilir, tur bitene kadar beklenir.
 5. Modelin **size yazdığı yanıt** (yalnızca `type=assistant` mesajın metin parçaları —
    kabuk/araç çıktıları, düşünme ve alt ajanlar hariç) sesli okunur:
-   - yanıt **kısayse** (≤ 320 karakter, en fazla 3 cümle) özet **çıkarılmaz**; metin
-     olduğu gibi, markdown/kod/bağlantılar temizlenerek okunur → ek LLM çağrısı yok,
-     daha hızlı ve daha ucuz,
-   - yanıt uzunsa kısa bir özete çevrilip okunur (özet anahtarı yoksa ham metin okunur).
+   - yanıt **düz yazıysa** (≤ 1.200 karakter / ≤ 260 kelime; kod bloğu, tablo veya
+     4+ maddelik liste yoksa) özet **çıkarılmaz**; metin olduğu gibi,
+     markdown/kod/bağlantılar temizlenerek okunur → ek LLM çağrısı yok,
+     daha hızlı ve daha ucuz (600–700 karakterlik bir hikâye de doğrudan okunur),
+   - yanıt daha uzunsa ya da yapısal içerik (kod/tablo/madde listesi) varsa kısa bir
+     özete çevrilip okunur (özet anahtarı yoksa ham metin okunur).
 6. Okuma bitince mikrofon yeniden açılır ve **takip komutu** beklenir (en fazla 2 tur):
-   - **"tekrar oku" / "bir daha"** → son özeti yeniden okur (yeniden özetlemez),
+   - **"tekrar oku" / "bir daha"** → son okunan metni yeniden okur (yeniden özetlemez),
    - **"daha detaylı" / "ayrıntılı" / "uzun anlat"** → ayrıntılı özet ister,
    - **"yeni komut" / "yeni istek" / "dinle"** → baştan yeni komut dinler,
    - **"tamam" / "teşekkürler" / "yeter"** → akışı kapatır.

@@ -163,6 +163,7 @@ private fun Root(
     val voiceConfirm by vm.voiceConfirm.collectAsState()
     val voiceAutoSummary by vm.voiceAutoSummary.collectAsState()
     val voiceName by vm.voiceName.collectAsState()
+    val voiceLastSpoken by vm.voiceLastSpoken.collectAsState()
     val evrenBaseUrl by vm.evrenBaseUrl.collectAsState()
     val evrenAsrSet by vm.evrenAsrSet.collectAsState()
     val evrenTtsSet by vm.evrenTtsSet.collectAsState()
@@ -293,6 +294,7 @@ private fun Root(
             voiceConfirm = voiceConfirm,
             voiceAutoSummary = voiceAutoSummary,
             voiceName = voiceName,
+            voiceLastSpoken = voiceLastSpoken,
             evrenBaseUrl = evrenBaseUrl,
             evrenAsrSet = evrenAsrSet,
             evrenTtsSet = evrenTtsSet,

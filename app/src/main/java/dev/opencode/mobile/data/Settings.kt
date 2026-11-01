@@ -50,6 +50,7 @@ class Settings(private val context: Context) {
     private val keyVoiceConfirm = booleanPreferencesKey("voice_confirm")
     private val keyVoiceAutoSummary = booleanPreferencesKey("voice_auto_summary")
     private val keyVoiceName = stringPreferencesKey("voice_name")
+    private val keyVoiceLastSpoken = stringPreferencesKey("voice_last_spoken")
     private val keyEvrenBase = stringPreferencesKey("evren_base")
     private val keyEvrenAsr = stringPreferencesKey("evren_asr_key")
     private val keyEvrenTts = stringPreferencesKey("evren_tts_key")
@@ -158,6 +159,14 @@ class Settings(private val context: Context) {
     /** VoxCPM2 sesi: deniz / ece / emre / kaan. */
     val voiceName: Flow<String> =
         context.dataStore.data.map { prefs -> prefs[keyVoiceName] ?: DEFAULT_VOICE }
+
+    /**
+     * En son sesli okunan metin (özet ya da doğrudan okunan yanıt). Kullanıcı
+     * ekrana bakmadan ne dendiğini kaçırdıysa Ayarlar → Sesli komut bölümünden
+     * okuyabilir; ayrıca hata ayıklamada "ne okundu" sorusunu yanıtlar.
+     */
+    val voiceLastSpoken: Flow<String> =
+        context.dataStore.data.map { prefs -> prefs[keyVoiceLastSpoken].orEmpty() }
 
     /** EVREN API taban adresi. */
     val evrenBaseUrl: Flow<String> =
@@ -309,6 +318,10 @@ class Settings(private val context: Context) {
 
     suspend fun setVoiceName(name: String) {
         context.dataStore.edit { prefs -> prefs[keyVoiceName] = name.trim().ifBlank { DEFAULT_VOICE } }
+    }
+
+    suspend fun setVoiceLastSpoken(text: String) {
+        context.dataStore.edit { prefs -> prefs[keyVoiceLastSpoken] = text.trim().take(4000) }
     }
 
     suspend fun setEvrenBaseUrl(url: String) {

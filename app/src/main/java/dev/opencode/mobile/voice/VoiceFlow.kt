@@ -517,10 +517,12 @@ class VoiceFlow(
         const val MAX_FOLLOW_UPS = 2
 
         /**
-         * Bu kadar kısa yanıtlar özetlenmeden doğrudan okunur. Özet çağrısı
-         * (LLM) atlanır → daha az gecikme ve token maliyeti.
+         * Bu sınırların altındaki **düz yazı** yanıtlar özetlenmeden doğrudan
+         * okunur. TTS zaten 1.200 karakterde kestiği için bu, okunabilen en
+         * uzun doğal metindir; ötesi özetlenir.
          */
-        const val SHORT_ANSWER_CHARS = 320
+        const val DIRECT_READ_MAX_CHARS = 1200
+        const val DIRECT_READ_MAX_WORDS = 260
 
         val YES_WORDS = listOf(
             "evet", "evet efendim", "onayla", "onay", "onaylıyorum", "tamam", "tamamdır",
@@ -826,17 +828,28 @@ class VoiceFlow(
             return
         }
 
-        // Kısa yanıtta özet çağrısı yapmaya gerek yok: hem bir LLM çağrısı
-        // (token/maliyet) hem de 1-2 sn gecikme tasarrufu. Metin olduğu gibi,
-        // yalnızca konuşmaya uygun hâle getirilerek okunur.
+        // Doğrudan okuma kuralı: yanıt **konuşmaya uygun düz yazıysa** özet
+        // çıkarmaya gerek yok. Önceden 320 karakter sınırı yüzünden 600-700
+        // karakterlik bir hikâye bile yeniden özetleniyordu (kullanıcı özeti
+        // değil, modelin kendi cümlelerini duymak istiyor).
+        //
+        // Özet yalnızca şu durumlarda: çok uzun (TTS zaten 1.200 karakterde
+        // kesiyor) ya da yapısal içerik (kod bloğu, tablo, madde listesi) var.
         val plain = speakable(answer)
-        val short = !detail && plain.length <= SHORT_ANSWER_CHARS &&
-            plain.count { it == '.' || it == '!' || it == '?' } <= 3
-        if (short || !client.summaryConfigured()) {
+        val bullets = Regex("(?m)^\\s*[-*•]\\s+").findAll(answer).count()
+        val tableRows = Regex("(?m)^\\s*\\|.*\\|\\s*$").findAll(answer).count()
+        val structured = answer.contains("```") || bullets >= 4 || tableRows >= 2
+        val words = plain.split(" ").count { it.isNotBlank() }
+        val direct = !detail &&
+            plain.length <= DIRECT_READ_MAX_CHARS &&
+            words <= DIRECT_READ_MAX_WORDS &&
+            !structured
+        if (direct || !client.summaryConfigured()) {
             lastSummary = plain
             stage = Stage.IDLE
-            Log.d(TAG, "kısa yanıt doğrudan okunuyor (${plain.length} krk)")
+            Log.d(TAG, "doğrudan okunuyor (${plain.length} krk, $words kelime)")
             onState("yanıt: $plain")
+            runCatching { settings.setVoiceLastSpoken(plain) }
             say(plain, client)
             stage = Stage.IDLE
             followUp(api, client, sessionId)
@@ -863,8 +876,9 @@ class VoiceFlow(
         } else {
             lastSummary = summary
             stage = Stage.IDLE
-            Log.d(TAG, "özet (${summary.length} krk): ${summary.take(80)}")
+            Log.d(TAG, "özet (${summary.length} krk): ${summary.take(200)}")
             onState("özet: $summary")
+            runCatching { settings.setVoiceLastSpoken(summary) }
             say(summary, client)
         }
         stage = Stage.IDLE
