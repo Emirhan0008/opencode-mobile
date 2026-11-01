@@ -89,19 +89,28 @@ class VoiceService : Service() {
             ACTION_DISABLE -> {
                 scope.launch {
                     runCatching { Settings(applicationContext).setVoiceEnabled(false) }
+                    runCatching { activeJob?.cancel() }
                     runCatching { flow.cancelCurrent() }
                     stopSelf()
                 }
                 return START_NOT_STICKY
             }
-            ACTION_LISTEN -> scope.launch { handleButton() }
+            // Kullanıcı düğmeye bastıysa onun isteği kazanır: süren akış
+            // (tur bekleme, özet okuma, dinleme) iptal edilip yenisi başlar.
+            ACTION_LISTEN -> scope.launch {
+                preempt()
+                withBusy { flow.onButton() }
+            }
             ACTION_BUTTON -> {
                 val long = intent.getBooleanExtra(EXTRA_LONG, false)
                 scope.launch { gesture(long) }
             }
             ACTION_SUMMARY -> {
                 val sid = intent.getStringExtra(EXTRA_SESSION_ID)
-                scope.launch { withBusy { flow.summarizeLast(sid) } }
+                scope.launch {
+                    preempt()
+                    withBusy { flow.summarizeLast(sid) }
+                }
             }
         }
         return START_STICKY
@@ -340,15 +349,27 @@ class VoiceService : Service() {
             // Konuşuyorsa her iki jest de susturur (acil durum).
             flow.stage == VoiceFlow.Stage.SPEAKING -> {
                 flow.stopSpeaking()
-                if (long) withBusy { flow.summarizeLast() }
+                if (long) {
+                    preempt()
+                    withBusy { flow.summarizeLast() }
+                }
                 return
             }
             long -> when (flow.stage) {
                 // Onay aşamasında uzun basış = "yeniden söyle".
-                VoiceFlow.Stage.CONFIRMING -> withBusy { flow.restartListening() }
-                else -> withBusy { flow.summarizeLast() }
+                VoiceFlow.Stage.CONFIRMING -> {
+                    preempt()
+                    withBusy { flow.restartListening() }
+                }
+                else -> {
+                    preempt()
+                    withBusy { flow.summarizeLast() }
+                }
             }
-            else -> handleButton()
+            else -> {
+                preempt()
+                handleButton()
+            }
         }
     }
 
@@ -356,9 +377,24 @@ class VoiceService : Service() {
         withBusy { flow.onButton() }
     }
 
+    /**
+     * Kullanıcı yeni bir düğmeye bastığında süren akışı iptal eder. Önceden
+     * `busy` bayrağı yüzünden tur beklerken (10 dk'ya kadar) **Özet** ve
+     * **Dinle** sessizce yutuluyordu.
+     */
+    private suspend fun preempt() {
+        val job = activeJob
+        if (job == null || job.isCompleted) return
+        android.util.Log.d(TAG, "önceki akış iptal ediliyor (aşama=${flow.stage})")
+        runCatching { flow.cancelCurrent() }
+        job.cancel()
+        runCatching { kotlinx.coroutines.withTimeoutOrNull(2_000) { job.join() } }
+        busy = false
+        activeJob = null
+    }
+
     /** Aynı anda iki akış çalışmasın. */
     private suspend fun withBusy(block: suspend () -> Unit) {
-        if (busy) return
         busy = true
         activeJob = kotlinx.coroutines.currentCoroutineContext()[Job]
         try {
@@ -416,10 +452,12 @@ class VoiceService : Service() {
             .setOngoing(true)
             .setSilent(true)
             .setContentIntent(open)
+            // MIUI yalnızca ilk 3 düğmeyi gösterir; bu yüzden Özet en sonda
+            // (stok Android'de 4'ü de görünür). Uzun basış da özet okur.
             .addAction(0, "Dinle", listen)
-            .addAction(0, "Özet", summary)
             .addAction(0, "Durdur", stop)
             .addAction(0, "Kapat", disable)
+            .addAction(0, "Özet", summary)
             .build()
     }
 

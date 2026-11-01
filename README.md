@@ -61,9 +61,9 @@ düğmelerdir** (kulaklık tuşu artık zorunlu değil; yedek olarak desteklenme
 | Bildirim | Düğme | Ne yapar |
 |---|---|---|
 | Sürekli "OpenCode — sesli komut" | **Dinle** | Yeni sesli komut akışını başlatır |
-| | **Özet** | Son yanıtı (veya bildirimin taşıdığı oturumu) özetleyip okur |
 | | **Durdur** | Yalnızca **süren işi** keser; özellik açık kalır (Dinle hemen çalışır) |
 | | **Kapat** | Sesli komut özelliğini tamamen kapatır (ayar da kapanır) |
+| | **Özet** | (Genişletilmiş bildirimde / stok Android'de 4. düğme) son yanıtı özetleyip okur |
 | "Görev tamamlandı" | **Sesli dinle** | O oturumun son yanıtını özetleyip okur |
 | | **Yeni komut** | Sesli akışı başlatır |
 

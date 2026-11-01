@@ -1,6 +1,7 @@
 package dev.opencode.mobile.voice
 
 import android.content.Context
+import android.util.Log
 import dev.opencode.mobile.data.Settings
 import dev.opencode.mobile.net.Api
 import dev.opencode.mobile.net.str
@@ -77,14 +78,21 @@ class VoiceFlow(
         stage = Stage.SPEAKING
         onState(text)
         val client = ev ?: return
-        runCatching {
+        try {
             val bytes = client.speak(text, voice())
+            Log.d(TAG, "TTS ${bytes.size} bayt: ${text.take(60)}")
             // Kayıttan çıkışa geçişte (SCO → A2DP / hoparlör) ses yolu hemen
             // hazır olmuyor; kısa bir nefes ilk hecenin kırpılmasını önler.
             runCatching { audio.closeInputRoute() }
             delay(250)
             audio.play(bytes)
-        }.onFailure { if (it !is CancellationException) onState("okuma hatası: ${it.message}") }
+            Log.d(TAG, "okuma bitti: ${text.take(40)}")
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.w(TAG, "okuma hatası: ${e.message}")
+            onState("okuma hatası: ${e.message}")
+        }
     }
 
     /** Tuşla kesilebilir okuma: oynatma sırasında [stopSpeaking] çağrılır. */
@@ -297,6 +305,7 @@ class VoiceFlow(
         words.any { w -> t == w || Regex("(^|\\s)${Regex.escape(w)}(\\s|$)").containsMatchIn(t) }
 
     private companion object {
+        const val TAG = "VoiceFlow"
         const val MAX_FOLLOW_UPS = 2
 
         val YES_WORDS = listOf(
@@ -573,6 +582,7 @@ class VoiceFlow(
         }
         onState("özetliyorum…")
         val summary = runCatching { client.summarize(answer, detail) }.getOrElse { e ->
+            Log.w(TAG, "özet hatası: ${e.message}")
             stage = Stage.IDLE
             onState("özet hatası: ${e.message}")
             say("Özet çıkaramadım. Ham yanıtı okuyorum. ${answer.take(400)}", client)
@@ -580,6 +590,7 @@ class VoiceFlow(
         }
         lastSummary = summary
         stage = Stage.IDLE
+        Log.d(TAG, "özet (${summary.length} krk): ${summary.take(80)}")
         onState("özet: $summary")
         say(summary, client)
         stage = Stage.IDLE
@@ -648,8 +659,12 @@ class VoiceFlow(
                 restartListening()
             }
             else -> {
-                say("Anlamadım. Tekrar oku, daha detaylı ya da yeni komut diyebilirsin.", ev)
-                followUp(api, ev, sessionId)
+                // Tanınmayan bir şey duyuldu: "anlamadım" diye tekrar sormak
+                // yerine sessizce bitir (gürültüde döngüye girmesin).
+                Log.d(TAG, "takip komutu tanınmadı: $answer")
+                followUps = 0
+                stage = Stage.IDLE
+                onState("hazır — dinlemek için Dinle")
             }
         }
     }
@@ -662,9 +677,26 @@ class VoiceFlow(
             val sessions = runCatching { api.sessions(3) }.getOrDefault(emptyList())
                 .filter { it.str("parentID").isNullOrBlank() }
             sessions.firstOrNull()?.str("id")
-        } ?: return
+        } ?: run {
+            onState("oturum bulunamadı")
+            say("Özetlenecek oturum bulamadım.", ev)
+            return
+        }
         targetSessionId = sid
         followUps = 0
+
+        // Tur hâlâ sürüyorsa yanıt henüz yazılmamış olur; boş özet okumak
+        // yerine kısa bir süre bitmesini bekle (en fazla 2 dk).
+        val running = runCatching { sid in api.active() }.getOrDefault(false)
+        if (running) {
+            onState("tur bitene kadar bekliyorum…")
+            say("Tur bitene kadar bekliyorum, sonra okuyacağım.", ev)
+            val startedAt = System.currentTimeMillis()
+            while (System.currentTimeMillis() - startedAt < 120_000) {
+                delay(3_000)
+                if (runCatching { sid !in api.active() }.getOrDefault(true)) break
+            }
+        }
         speakSummary(api, ev, sid)
     }
 
