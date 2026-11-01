@@ -67,6 +67,19 @@ düğmelerdir** (kulaklık tuşu artık zorunlu değil; yedek olarak desteklenme
 | "Görev tamamlandı" | **Sesli dinle** | O oturumun son yanıtını özetleyip okur |
 | | **Yeni komut** | Sesli akışı başlatır |
 
+Sürekli bildirim bir **süreç panosu** gibi çalışır: başlık ve renk o anki aşamayı
+gösterir, alt metinde adım numarası bulunur.
+
+| Aşama | Bildirim başlığı | Renk |
+|---|---|---|
+| Beklemede | `Beklemede` | gri |
+| Kayıt | `Dinliyorum…` | kırmızı |
+| Onay | `Onay bekliyorum` | sarı |
+| Oturum seçimi | `Oturum seç` | mor |
+| Gönderim | `Gönderiyorum…` | mavi |
+| Tur bekleniyor | `Yanıt bekleniyor…` | turuncu |
+| Okuma | `Okuyorum…` | yeşil |
+
 Akış (düğmeye bir kez dokunduktan sonra tamamen sesli):
 
 1. Bip → konuş. Sessizlik algılanınca kayıt kendiliğinden biter.
@@ -77,7 +90,23 @@ Akış (düğmeye bir kez dokunduktan sonra tamamen sesli):
    - bir oturum adı ("mobile", "fastpass"…) → onaylar ve o oturumu seçer,
    - **"hayır"** (yok/olmaz/tekrar/yanlış…) → yeniden dinler,
    - **"iptal/vazgeç/dur"** → akışı bitirir,
-   - başka bir cümle → düzeltme sayılır ve yeni komut olarak okunur.
+   - **kısmi düzeltme** (aşağıya bakın) → yalnızca ilgili kelimeler değişir,
+   - başka bir cümle → yeni komut olarak okunur.
+
+### Kısmi düzeltme (cümlenin tamamını tekrar söylemeden)
+
+Duyulan cümlede yalnızca birkaç kelime yanlışsa şunlar söylenebilir:
+
+| Söylenen | Sonuç |
+|---|---|
+| "istanbul **yerine** ankara" | o kelime değiştirilir |
+| "**son kelimeyi sil**" / "son **iki** kelimeyi sil" | sondan 1–5 kelime silinir |
+| "**bursa'yı sil**" / "**sil** bursa" | o kelime(ler) silinir |
+| "**sonuna** yarın **ekle**" / "**ekle** yarın" | sona eklenir |
+| "**düzelt**" / "**değiştir**" (tek başına) | neyi değiştireceğini sorar |
+
+Eşleştirme **bulanıktır**: kelime bir harf eksik/fazla duyulduysa da bulunur.
+Düzeltmeden sonra yeni cümle okunur ve onay yeniden beklenir.
 3. En yeni 5 üst düzey oturum tek cümlede sesli okunur, ardından mikrofon açılır;
    **numara ya da oturum adı** söyle ("bir"…"beş"; "en yeni"/"son" = 1). "Tekrar oku"
    listeyi yeniden okur. Anlaşılmazsa bir kez daha sorar, yine olmazsa en yeni oturuma gider.

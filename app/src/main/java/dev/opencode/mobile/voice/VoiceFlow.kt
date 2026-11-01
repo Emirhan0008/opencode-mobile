@@ -31,13 +31,27 @@ class VoiceFlow(
     private val context: Context,
     private val settings: Settings,
     private val audio: AudioEngine,
-    private val onState: (String) -> Unit,
+    private val notify: (String) -> Unit,
+    /** Aşama değişince çağrılır (bildirimi renkli/başlıklı güncellemek için). */
+    private val onStage: (Stage, String) -> Unit = { _, _ -> },
 ) {
 
     enum class Stage { IDLE, LISTENING, CONFIRMING, PICKING, SENDING, WAITING, SPEAKING }
 
+    /** En son yayınlanan durum metni — aşama değişiminde de taşınır. */
+    private var lastState: String = ""
+
     @Volatile var stage: Stage = Stage.IDLE
-        private set
+        private set(value) {
+            field = value
+            runCatching { onStage(value, lastState) }
+        }
+
+    /** Durum metni + aşama bildirimi (eski `onState` çağrılarının yerini alır). */
+    private fun onState(text: String) {
+        lastState = text
+        runCatching { notify(text) }
+    }
 
     private var pendingText: String? = null
     private var targetSessionId: String? = null
@@ -234,6 +248,36 @@ class VoiceFlow(
                 pendingPick = pick
                 confirmAndPick()
             }
+            // Kısmi düzeltme: "iki yerine üç", "son kelimeyi sil", "sonuna ekle".
+            // Tüm cümleyi tekrar söylemek gerekmez.
+            parseCorrection(answer) != null || looksLikeCorrection(answer) -> {
+                val current = pendingText.orEmpty()
+                val edited = parseCorrection(answer)?.let { (target, repl) ->
+                    replaceInText(current, target, repl)
+                }
+                val deletion = parseDeletion(answer)
+                val addition = parseAddition(answer)
+                val newText = when {
+                    edited != null -> edited
+                    deletion != null -> deleteFromText(current, deletion)
+                    addition != null -> applyAddition(current, addition)
+                    else -> null
+                }
+                if (newText != null && newText.isNotBlank()) {
+                    pendingText = newText
+                    onState("düzeltildi: $newText")
+                    stage = Stage.CONFIRMING
+                    say("Düzelttim: $newText", ev)
+                    if (attempt < 5) {
+                        awaitConfirm(ev, attempt + 1)
+                    } else {
+                        confirmAndPick()
+                    }
+                } else {
+                    say("Neyi değiştireyim? Örneğin 'iki yerine üç' ya da 'son kelimeyi sil'.", ev)
+                    if (attempt < 4) awaitConfirm(ev, attempt + 1) else restartListening()
+                }
+            }
             choice == true -> {
                 pendingPick = null
                 confirmAndPick()
@@ -263,6 +307,165 @@ class VoiceFlow(
                 confirmAndPick()
             }
         }
+    }
+
+    // ------------------------------------------------- kısmi düzeltme
+
+    /**
+     * Söylenen cümlenin yalnızca birkaç kelimesi yanlış duyulduysa tüm cümleyi
+     * tekrar söylemek gerekmez. Şu kalıplar desteklenir:
+     *
+     *  - "istanbul yerine ankara"      → o kelimeyi değiştir
+     *  - "son kelimeyi sil" / "iki kelime sil" → s sondan sil
+     *  - "bursa'yı sil"                → o kelimeyi sil
+     *  - "sonuna yarın ekle" / "ekle: yarın" → sona ekle
+     *
+     * Eşleştirme bulanıktır: STT bir kelimeyi azıcık farklı yazdıysa (bir harf
+     * eksik/fazla) yine bulunur.
+     */
+    private val CORRECTION_HINTS = listOf(
+        "yerine", "sil", "sıl", "ekle", "düzelt", "duzelt", "değiştir", "degistir",
+        "çıkar", "cikar", "kaldır", "kaldir", "düzeltme",
+    )
+
+    private fun looksLikeCorrection(text: String): Boolean =
+        hasAny(normalize(text), CORRECTION_HINTS)
+
+    /** "X yerine Y" → (X, Y) */
+    private fun parseCorrection(text: String): Pair<String, String>? {
+        val m = Regex("(?iu)(.+?)\\s+yerine\\s+(.+)").find(text.trim()) ?: return null
+        val target = cleanTarget(m.groupValues[1])
+        val repl = m.groupValues[2].trim().trimEnd('.', ',', '!', '?', ';')
+        if (target.isBlank()) return null
+        return target to repl
+    }
+
+    /** Hedef kelime öbeğini sadeleştir: "şunu", "son", iyelik/hâl ekleri. */
+    private fun cleanTarget(raw: String): String {
+        var t = raw.trim().trim('"', '\'', '“', '”')
+        t = t.replace(Regex("(?iu)^(şunu|sunu|şu|su|bu|o|son|sonuncu)\\s+"), "")
+        t = t.replace(
+            Regex("(?iu)\\s+(kelimesini|kelimeyi|kelimesi|sözcüğü|sozcugu|kısmını|kismini)$"),
+            "",
+        )
+        return t.trim()
+    }
+
+    /** "son [iki] kelimeyi sil" → "last:2" ; "bursa'yı sil" → "word:bursa" */
+    private fun parseDeletion(text: String): String? {
+        val t = normalize(text)
+        // son N kelimeyi sil
+        val m = Regex(
+            "(?:^|\\s)(son|sonuncu)?\\s*(bir|iki|üç|uc|dört|dort|beş|bes|\\d+)?\\s*" +
+                "(kelime|kelimeler|sözcük|sozcuk)\\w*\\s*(sil|çıkar|cikar|kaldır|kaldir)",
+        ).find(t)
+        if (m != null) {
+            val n = when (m.groupValues[2]) {
+                "iki" -> 2
+                "üç", "uc" -> 3
+                "dört", "dort" -> 4
+                "beş", "bes" -> 5
+                else -> m.groupValues[2].toIntOrNull() ?: 1
+            }
+            return "last:$n"
+        }
+        // "X sil" / "X'i sil": sil'den önceki kısım hedeftir
+        val cut = Regex("(?iu)\\s*(sil|çıkar|cikar|kaldır|kaldir)\\s*$").find(text.trim())
+        if (cut != null) {
+            val target = cleanTarget(text.trim().substring(0, cut.range.first))
+            if (target.isNotBlank()) return "word:$target"
+        }
+        // "sil X"
+        val head = Regex("(?iu)^\\s*(sil|çıkar|cikar|kaldır|kaldir)\\s+(.+)").find(text.trim())
+        if (head != null) {
+            val target = cleanTarget(head.groupValues[2])
+            if (target.isNotBlank()) return "word:$target"
+        }
+        return null
+    }
+
+    /** "sonuna X ekle" / "X ekle" / "ekle X" → eklenecek metin */
+    private fun parseAddition(text: String): String? {
+        val t = text.trim()
+        Regex("(?iu)(?:sonuna|sona|arkasına|arkasina)\\s+(.+?)\\s+ekle").find(t)?.let {
+            return it.groupValues[1].trim().trimEnd('.', ',', '!', '?')
+        }
+        Regex("(?iu)^\\s*(?:ekle|ilave et)\\s+(.+)").find(t)?.let {
+            return it.groupValues[1].trim().trimEnd('.', ',', '!', '?')
+        }
+        Regex("(?iu)(.+?)\\s+(?:ekle|ilave et)\\s*[.!?]?$").find(t)?.let {
+            return it.groupValues[1].trim()
+        }
+        return null
+    }
+
+    private fun replaceInText(current: String, target: String, repl: String): String? {
+        val words = current.split(" ").filter { it.isNotBlank() }.toMutableList()
+        val want = normalize(target).split(" ").filter { it.isNotBlank() }
+        if (words.isEmpty() || want.isEmpty()) return null
+        val n = want.size
+        var bestAt = -1
+        var bestScore = 0
+        for (start in 0..(words.size - n)) {
+            var score = 0
+            for (i in 0 until n) if (tokenMatches(normalize(words[start + i]), want[i])) score++
+            if (score > bestScore) {
+                bestScore = score
+                bestAt = start
+            }
+        }
+        if (bestAt < 0 || bestScore < n) return null
+        val out = words.toMutableList()
+        repeat(n) { out.removeAt(bestAt) }
+        if (repl.isNotBlank()) out.add(bestAt, repl)
+        return out.joinToString(" ").trim()
+    }
+
+    private fun deleteFromText(current: String, spec: String): String? {
+        val words = current.split(" ").filter { it.isNotBlank() }
+        return when {
+            spec.startsWith("last:") -> {
+                val n = spec.removePrefix("last:").toIntOrNull() ?: 1
+                if (words.size <= n) "" else words.dropLast(n).joinToString(" ")
+            }
+            spec.startsWith("word:") -> {
+                val target = spec.removePrefix("word:")
+                replaceInText(current, target, "")
+            }
+            else -> null
+        }
+    }
+
+    private fun applyAddition(current: String, extra: String): String =
+        (current.trim() + " " + extra.trim()).trim()
+
+    /** Bulanık kelime eşleşmesi: birebir, önek veya 1-2 harf farkı. */
+    private fun tokenMatches(a: String, b: String): Boolean {
+        if (a == b) return true
+        val x = a.trim('\'', '"', '.', ',', '!', '?')
+        val y = b.trim('\'', '"', '.', ',', '!', '?')
+        if (x == y) return true
+        if (x.isEmpty() || y.isEmpty()) return false
+        if (x.length >= 4 && y.length >= 4 && (x.startsWith(y) || y.startsWith(x))) return true
+        val d = editDistance(x, y)
+        return d <= if (minOf(x.length, y.length) >= 6) 2 else 1
+    }
+
+    private fun editDistance(a: String, b: String): Int {
+        if (a == b) return 0
+        if (a.isEmpty()) return b.length
+        if (b.isEmpty()) return a.length
+        var prev = IntArray(b.length + 1) { it }
+        var cur = IntArray(b.length + 1)
+        for (i in 1..a.length) {
+            cur[0] = i
+            for (j in 1..b.length) {
+                val cost = if (a[i - 1] == b[j - 1]) 0 else 1
+                cur[j] = minOf(cur[j - 1] + 1, prev[j] + 1, prev[j - 1] + cost)
+            }
+            val tmp = prev; prev = cur; cur = tmp
+        }
+        return prev[b.length]
     }
 
     /**

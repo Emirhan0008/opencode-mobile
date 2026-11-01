@@ -59,10 +59,16 @@ class VoiceService : Service() {
         super.onCreate()
         Notifier.init(this)
         audio = AudioEngine(this)
-        startForegroundCompat(buildNotification("Sesli komut hazır — kulaklık tuşuna bas"))
+        startForegroundCompat(buildNotification(VoiceFlow.Stage.IDLE, "Sesli komut hazır — dinlemek için Dinle"))
 
         val settings = Settings(applicationContext)
-        flow = VoiceFlow(applicationContext, settings, audio) { st -> updateNotification(st) }
+        flow = VoiceFlow(
+            applicationContext,
+            settings,
+            audio,
+            notify = { st -> updateNotification(st) },
+            onStage = { stage, st -> updateNotification(st, stage) },
+        )
         setupMediaSession()
         registerScreenReceiver()
         claimMediaButtonSession()
@@ -412,7 +418,30 @@ class VoiceService : Service() {
 
     // ---------------------------------------------------------- bildirim
 
-    private fun buildNotification(text: String): Notification {
+    /**
+     * Bildirimde gösterilen aşama: başlık, renk, adım numarası ve "çalışıyor"
+     * göstergesi. Amaç, ekrana bakmadan da ne olduğunun **renk + başlıkla**
+     * anlaşılması; uzun durum cümleleri yerine kısa süreç adları.
+     */
+    private data class StageUi(
+        val title: String,
+        val color: Int,
+        val step: Int,
+        val busy: Boolean = false,
+    )
+
+    private fun stageUi(stage: VoiceFlow.Stage): StageUi = when (stage) {
+        VoiceFlow.Stage.IDLE -> StageUi("Beklemede", 0xFF8B949E.toInt(), 0)
+        VoiceFlow.Stage.LISTENING -> StageUi("Dinliyorum…", 0xFFFF5C5C.toInt(), 1)
+        VoiceFlow.Stage.CONFIRMING -> StageUi("Onay bekliyorum", 0xFFFFC145.toInt(), 2)
+        VoiceFlow.Stage.PICKING -> StageUi("Oturum seç", 0xFF8B6CD8.toInt(), 3)
+        VoiceFlow.Stage.SENDING -> StageUi("Gönderiyorum…", 0xFF2F81F7.toInt(), 4, busy = true)
+        VoiceFlow.Stage.WAITING -> StageUi("Yanıt bekleniyor…", 0xFFFF9F43.toInt(), 4, busy = true)
+        VoiceFlow.Stage.SPEAKING -> StageUi("Okuyorum…", 0xFF3FB950.toInt(), 5)
+    }
+
+    private fun buildNotification(stage: VoiceFlow.Stage, text: String): Notification {
+        val ui = stageUi(stage)
         val open = PendingIntent.getActivity(
             this,
             0,
@@ -444,16 +473,26 @@ class VoiceService : Service() {
             Intent(this, VoiceService::class.java).apply { action = ACTION_DISABLE },
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
-        return NotificationCompat.Builder(this, Notifier.CHANNEL_ID)
+        val stepText = if (ui.step == 0) "hazır" else "adım ${ui.step}/5"
+        val builder = NotificationCompat.Builder(this, Notifier.CHANNEL_ID)
             .setSmallIcon(android.R.drawable.ic_btn_speak_now)
-            .setContentTitle("OpenCode — sesli komut")
+            .setContentTitle(ui.title)
             .setContentText(text)
-            .setStyle(NotificationCompat.BigTextStyle().bigText(text))
+            .setSubText("OpenCode · $stepText")
+            .setStyle(NotificationCompat.BigTextStyle().bigText(text).setSummaryText(stepText))
             .setOngoing(true)
             .setSilent(true)
+            .setOnlyAlertOnce(true)
+            .setShowWhen(false)
+            .setColor(ui.color)
+            .setColorized(true)
+            .setCategory(NotificationCompat.CATEGORY_SERVICE)
+            .setPriority(NotificationCompat.PRIORITY_LOW)
             .setContentIntent(open)
-            // MIUI yalnızca ilk 3 düğmeyi gösterir; bu yüzden Özet en sonda
-            // (stok Android'de 4'ü de görünür). Uzun basış da özet okur.
+        if (ui.busy) builder.setProgress(0, 0, true)
+        // MIUI yalnızca ilk 3 düğmeyi gösterir; bu yüzden Özet en sonda
+        // (stok Android'de 4'ü de görünür). Uzun basış da özet okur.
+        return builder
             .addAction(0, "Dinle", listen)
             .addAction(0, "Durdur", stop)
             .addAction(0, "Kapat", disable)
@@ -461,13 +500,16 @@ class VoiceService : Service() {
             .build()
     }
 
-    private fun updateNotification(text: String) {
+    private fun currentStage(): VoiceFlow.Stage =
+        if (::flow.isInitialized) flow.stage else VoiceFlow.Stage.IDLE
+
+    private fun updateNotification(text: String, stage: VoiceFlow.Stage = currentStage()) {
         stateJob?.cancel()
         stateJob = scope.launch {
             delay(120) // hızlı art arda gelen güncellemeleri birleştir
             runCatching {
                 val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-                manager.notify(FOREGROUND_ID, buildNotification(text))
+                manager.notify(FOREGROUND_ID, buildNotification(stage, text))
             }
         }
     }
