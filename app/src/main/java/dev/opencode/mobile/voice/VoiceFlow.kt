@@ -85,7 +85,10 @@ class VoiceFlow(
             // hazır olmuyor; kısa bir nefes ilk hecenin kırpılmasını önler.
             runCatching { audio.closeInputRoute() }
             delay(250)
+            audio.cue(AudioEngine.Cue.SPEAK_START)
+            delay(150)
             audio.play(bytes)
+            audio.cue(AudioEngine.Cue.SPEAK_END)
             Log.d(TAG, "okuma bitti: ${text.take(40)}")
         } catch (e: CancellationException) {
             throw e

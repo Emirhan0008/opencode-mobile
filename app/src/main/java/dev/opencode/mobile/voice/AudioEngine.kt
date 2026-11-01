@@ -279,20 +279,59 @@ class AudioEngine(private val context: Context) {
         if (cont != null && cont.isActive) cont.resume(Unit)
     }
 
-    /** Kısa bip — kaydın başladığını kulaklıkta duyurmak için. */
-    fun beep(start: Boolean) {
+    /**
+     * Telsiz ("roger beep") tarzı kısa sesli geri bildirim.
+     *
+     * Tek bir [ToneGenerator] üzerinde sıralı tonlar çalınır; her ton arasında
+     * kısa boşluk vardır. Tonlar dinleme/okuma başlangıcı ve bitişinde farklıdır
+     * ki kullanıcı ekrana bakmadan ne olduğunu anlayabilsin.
+     */
+    enum class Cue {
+        /** Dinleme başlıyor: tek kısa, tiz "dit". */
+        LISTEN_START,
+        /** Dinleme bitti (yazıya çevriliyor): iki kısa tiz "di-dit". */
+        LISTEN_END,
+        /** Okuma başlıyor: tek kısa, pes "dum". */
+        SPEAK_START,
+        /** Okuma bitti: alçalan iki ton "dii-dum". */
+        SPEAK_END,
+    }
+
+    private val toneHandler = android.os.Handler(android.os.Looper.getMainLooper())
+
+    fun cue(kind: Cue) {
+        val seq: List<Pair<Int, Int>> = when (kind) {
+            Cue.LISTEN_START -> listOf(TONE_PIP to 70)
+            Cue.LISTEN_END -> listOf(TONE_PIP to 55, TONE_PIP to 55)
+            Cue.SPEAK_START -> listOf(TONE_DEEP to 80)
+            Cue.SPEAK_END -> listOf(TONE_MID to 70, TONE_DEEP to 110)
+        }
+        playSequence(seq, volume = 85)
+    }
+
+    /** Eski çağrı biçimi: kayıt başlangıcı/bitişi. */
+    fun beep(start: Boolean) = cue(if (start) Cue.LISTEN_START else Cue.LISTEN_END)
+
+    private fun playSequence(seq: List<Pair<Int, Int>>, volume: Int) {
         runCatching {
-            val tone = android.media.ToneGenerator(AudioManager.STREAM_MUSIC, 70)
-            tone.startTone(
-                if (start) android.media.ToneGenerator.TONE_PROP_BEEP else android.media.ToneGenerator.TONE_PROP_ACK,
-                120,
-            )
-            android.os.Handler(android.os.Looper.getMainLooper())
-                .postDelayed({ runCatching { tone.release() } }, 400)
+            val tone = android.media.ToneGenerator(AudioManager.STREAM_MUSIC, volume)
+            var at = 0L
+            for ((toneType, duration) in seq) {
+                toneHandler.postDelayed({
+                    runCatching { tone.startTone(toneType, duration) }
+                }, at)
+                at += duration + 45
+            }
+            toneHandler.postDelayed({ runCatching { tone.release() } }, at + 250)
         }
     }
 
     private companion object {
         const val TAG = "AudioEngine"
+
+        // Telsiz hissi veren kısa tonlar (ToneGenerator hazır sesleri).
+        const val TONE_PIP = android.media.ToneGenerator.TONE_CDMA_PIP
+        const val TONE_MID = android.media.ToneGenerator.TONE_PROP_BEEP
+        const val TONE_DEEP = android.media.ToneGenerator.TONE_PROP_PROMPT
     }
 }
