@@ -45,6 +45,8 @@ class VoiceService : Service() {
     private var mediaSession: MediaSession? = null
 
     @Volatile private var busy = false
+    /** Süren sesli akış işi — **Durdur** bunu iptal eder. */
+    private var activeJob: Job? = null
     private var lastDownAt = 0L
 
     /** Son işlenen jest (ms) — çift yönlendirmeyi yutmak için. */
@@ -77,9 +79,17 @@ class VoiceService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
-            ACTION_STOP -> {
+            // Durdur: YALNIZCA süren işi keser — özellik açık kalır, Dinle çalışır.
+            ACTION_STOP -> scope.launch {
+                runCatching { activeJob?.cancel() }
+                runCatching { flow.cancelCurrent() }
+                updateNotification("durduruldu — dinlemek için Dinle")
+            }
+            // Kapat: özelliği tamamen kapatır (ayar da kapanır).
+            ACTION_DISABLE -> {
                 scope.launch {
                     runCatching { Settings(applicationContext).setVoiceEnabled(false) }
+                    runCatching { flow.cancelCurrent() }
                     stopSelf()
                 }
                 return START_NOT_STICKY
@@ -350,12 +360,17 @@ class VoiceService : Service() {
     private suspend fun withBusy(block: suspend () -> Unit) {
         if (busy) return
         busy = true
+        activeJob = kotlinx.coroutines.currentCoroutineContext()[Job]
         try {
             block()
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            updateNotification("durduruldu — dinlemek için Dinle")
+            throw e
         } catch (e: Exception) {
             updateNotification("hata: ${e.message?.take(80)}")
         } finally {
             busy = false
+            activeJob = null
         }
     }
 
@@ -387,6 +402,12 @@ class VoiceService : Service() {
             Intent(this, VoiceService::class.java).apply { action = ACTION_SUMMARY },
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
+        val disable = PendingIntent.getService(
+            this,
+            5,
+            Intent(this, VoiceService::class.java).apply { action = ACTION_DISABLE },
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
         return NotificationCompat.Builder(this, Notifier.CHANNEL_ID)
             .setSmallIcon(android.R.drawable.ic_btn_speak_now)
             .setContentTitle("OpenCode — sesli komut")
@@ -398,6 +419,7 @@ class VoiceService : Service() {
             .addAction(0, "Dinle", listen)
             .addAction(0, "Özet", summary)
             .addAction(0, "Durdur", stop)
+            .addAction(0, "Kapat", disable)
             .build()
     }
 
@@ -431,6 +453,7 @@ class VoiceService : Service() {
         private const val TAG = "VoiceService"
         private const val FOREGROUND_ID = 1002
         private const val ACTION_STOP = "dev.opencode.mobile.voice.STOP"
+        private const val ACTION_DISABLE = "dev.opencode.mobile.voice.DISABLE"
         private const val ACTION_BUTTON = "dev.opencode.mobile.voice.BUTTON"
         private const val EXTRA_LONG = "dev.opencode.mobile.voice.LONG"
 

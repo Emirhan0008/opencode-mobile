@@ -11,6 +11,7 @@ import android.media.MediaRecorder
 import android.os.Build
 import android.util.Log
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import java.io.ByteArrayOutputStream
@@ -138,6 +139,7 @@ class AudioEngine(private val context: Context) {
         try {
             record.startRecording()
             while (true) {
+                kotlinx.coroutines.currentCoroutineContext().ensureActive()
                 val n = record.read(chunk, 0, chunk.size)
                 if (n <= 0) continue
                 val now = System.currentTimeMillis()
@@ -250,6 +252,9 @@ class AudioEngine(private val context: Context) {
                 mp.setOnCompletionListener { finish() }
                 mp.setOnErrorListener { _, _, _ -> finish(); true }
                 mp.prepare()
+                // Bluetooth'ta A2DP akışı start() ile hemen açılmıyor; ilk
+                // ~200 ms'lik hazırlık ilk hecelerin yutulmasını engeller.
+                android.os.SystemClock.sleep(220)
                 mp.start()
             }.onFailure {
                 Log.w(TAG, "oynatma hatası: ${it.message}")

@@ -157,14 +157,14 @@ fun SettingsScreen(
             SettingsSection("SESLİ KOMUT") {
                 SettingsSwitchRow(
                     title = "Sesli komut",
-                    subtitle = "Bildirimdeki düğmelerle başlat; onay, oturum seçimi ve yanıt dinleme tamamen sesli",
+                    subtitle = "Bildirimdeki düğmelerle başlat; onay, oturum seçimi ve yanıt dinleme tamamen sesli. Durdur süren işi keser, Kapat özelliği kapatır",
                     checked = voiceEnabled,
                     enabled = true,
                     onCheckedChange = onToggleVoice,
                 )
                 SettingsSwitchRow(
                     title = "Duyduğunu sesli teyit et",
-                    subtitle = "Prompt gönderilmeden önce ne anladığını okur",
+                    subtitle = "Prompt gönderilmeden önce ne anladığını okur; okuma biter bitmez mikrofon açılır (ekstra onay turu yok)",
                     checked = voiceConfirm,
                     enabled = voiceEnabled,
                     onCheckedChange = onToggleVoiceConfirm,

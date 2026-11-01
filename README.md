@@ -62,19 +62,25 @@ düğmelerdir** (kulaklık tuşu artık zorunlu değil; yedek olarak desteklenme
 |---|---|---|
 | Sürekli "OpenCode — sesli komut" | **Dinle** | Yeni sesli komut akışını başlatır |
 | | **Özet** | Son yanıtı (veya bildirimin taşıdığı oturumu) özetleyip okur |
-| | **Durdur** | Sesli komut servisini kapatır |
+| | **Durdur** | Yalnızca **süren işi** keser; özellik açık kalır (Dinle hemen çalışır) |
+| | **Kapat** | Sesli komut özelliğini tamamen kapatır (ayar da kapanır) |
 | "Görev tamamlandı" | **Sesli dinle** | O oturumun son yanıtını özetleyip okur |
 | | **Yeni komut** | Sesli akışı başlatır |
 
 Akış (düğmeye bir kez dokunduktan sonra tamamen sesli):
 
 1. Bip → konuş. Sessizlik algılanınca kayıt kendiliğinden biter.
-2. Uygulama duyduğunu **sesli okur** ("Şunu mu söyledin: …") ve **kendiliğinden dinlemeye
-   geçer**. Onay için **"evet"** (onayla/tamam/doğru/olur/gönder…) ya da red için
-   **"hayır"** (yok/olmaz/tekrar/yanlış…) de. "İptal/vazgeç/dur" akışı bitirir.
-3. En yeni 5 üst düzey oturum sesli okunur, ardından mikrofon açılır; **numarayı söyle**
-   ("bir"…"beş"; "en yeni"/"son" = 1). "Tekrar oku" listeyi yeniden okur. Anlaşılmazsa
-   bir kez daha sorar, yine olmazsa en yeni oturuma gider.
+2. Uygulama duyduğunu **sesli okur** ("Şunu mu söyledin: …") ve **okuma biter
+   bitmez** mikrofonu açar — ayrıca "evet ya da hayır de" turu yoktur. Tek nefeste:
+   - **"evet"** (onayla/tamam/doğru/olur/gönder…) → devam,
+   - **"iki"** gibi bir numara → onaylar **ve** o oturumu seçer (tek nefeste),
+   - bir oturum adı ("mobile", "fastpass"…) → onaylar ve o oturumu seçer,
+   - **"hayır"** (yok/olmaz/tekrar/yanlış…) → yeniden dinler,
+   - **"iptal/vazgeç/dur"** → akışı bitirir,
+   - başka bir cümle → düzeltme sayılır ve yeni komut olarak okunur.
+3. En yeni 5 üst düzey oturum tek cümlede sesli okunur, ardından mikrofon açılır;
+   **numara ya da oturum adı** söyle ("bir"…"beş"; "en yeni"/"son" = 1). "Tekrar oku"
+   listeyi yeniden okur. Anlaşılmazsa bir kez daha sorar, yine olmazsa en yeni oturuma gider.
 4. Prompt gönderilir, tur bitene kadar beklenir.
 5. Modelin **size yazdığı yanıt** (yalnızca `type=assistant` mesajın metin parçaları —
    kabuk/araç çıktıları, düşünme ve alt ajanlar hariç) kısa bir özete çevrilip sesli okunur.
@@ -85,7 +91,8 @@ Akış (düğmeye bir kez dokunduktan sonra tamamen sesli):
    - **"tamam" / "teşekkürler" / "yeter"** → akışı kapatır.
 
 Sessizlikte akış sessizce kapanır; mikrofon açık kalmaz. Konuşma sırasında medya tuşu
-(veya bildirimdeki **Durdur**) okumayı keser.
+okumayı keser. Bildirimdeki **Durdur** yalnızca süren işi keser (özellik açık kalır);
+özelliği tamamen kapatmak için **Kapat** kullanılır.
 
 ### Yedek: kulaklık medya tuşu
 
