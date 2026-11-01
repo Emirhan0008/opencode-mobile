@@ -83,7 +83,11 @@ Akış (düğmeye bir kez dokunduktan sonra tamamen sesli):
    listeyi yeniden okur. Anlaşılmazsa bir kez daha sorar, yine olmazsa en yeni oturuma gider.
 4. Prompt gönderilir, tur bitene kadar beklenir.
 5. Modelin **size yazdığı yanıt** (yalnızca `type=assistant` mesajın metin parçaları —
-   kabuk/araç çıktıları, düşünme ve alt ajanlar hariç) kısa bir özete çevrilip sesli okunur.
+   kabuk/araç çıktıları, düşünme ve alt ajanlar hariç) sesli okunur:
+   - yanıt **kısayse** (≤ 320 karakter, en fazla 3 cümle) özet **çıkarılmaz**; metin
+     olduğu gibi, markdown/kod/bağlantılar temizlenerek okunur → ek LLM çağrısı yok,
+     daha hızlı ve daha ucuz,
+   - yanıt uzunsa kısa bir özete çevrilip okunur (özet anahtarı yoksa ham metin okunur).
 6. Okuma bitince mikrofon yeniden açılır ve **takip komutu** beklenir (en fazla 2 tur):
    - **"tekrar oku" / "bir daha"** → son özeti yeniden okur (yeniden özetlemez),
    - **"daha detaylı" / "ayrıntılı" / "uzun anlat"** → ayrıntılı özet ister,

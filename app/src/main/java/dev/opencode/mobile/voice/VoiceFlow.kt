@@ -308,6 +308,12 @@ class VoiceFlow(
         const val TAG = "VoiceFlow"
         const val MAX_FOLLOW_UPS = 2
 
+        /**
+         * Bu kadar kısa yanıtlar özetlenmeden doğrudan okunur. Özet çağrısı
+         * (LLM) atlanır → daha az gecikme ve token maliyeti.
+         */
+        const val SHORT_ANSWER_CHARS = 320
+
         val YES_WORDS = listOf(
             "evet", "evet efendim", "onayla", "onay", "onaylıyorum", "tamam", "tamamdır",
             "doğru", "dogru", "doğrudur", "olur", "olsun", "gönder", "gonder", "gönderelim",
@@ -564,6 +570,32 @@ class VoiceFlow(
         return false
     }
 
+    /**
+     * Metni sesli okumaya uygun hâle getirir: kod blokları, markdown
+     * işaretleri, bağlantılar ve tablo çizgileri çıkarılır; sesli okununca
+     * anlamsız olan satırlar atlanır.
+     */
+    private fun speakable(text: String): String {
+        var t = text
+        // ```kod blokları``` — sesli okunmaz, "kod bloğu" diye geçilir.
+        val hadCode = Regex("(?s)```.*?```").containsMatchIn(t)
+        t = t.replace(Regex("(?s)```.*?```"), " ")
+        // satır içi kod, kalın/italik, başlık, alıntı işaretleri
+        t = t.replace(Regex("`([^`]*)`"), "$1")
+        t = t.replace(Regex("[*_#>|]+"), " ")
+        // markdown bağlantısı → yalnızca metni
+        t = t.replace(Regex("\\[([^\\]]*)]\\([^)]*\\)"), "$1")
+        // çıplak URL'ler sesli okununca çok uzun; kısalt
+        t = t.replace(Regex("https?://\\S+"), " bağlantı ")
+        // madde işaretleri ve numaralandırma
+        t = t.replace(Regex("(?m)^\\s*[-•]\\s*"), " ")
+        t = t.replace(Regex("(?m)^\\s*\\d+[.)]\\s*"), " ")
+        // tablo ayırıcı satırları (---|---)
+        t = t.replace(Regex("(?m)^\\s*\\|?[-: ]{3,}\\|.*$"), " ")
+        t = t.replace(Regex("\\s+"), " ").trim()
+        return if (hadCode && t.length < 40) "Yanıt yalnızca kod içeriyor." else t
+    }
+
     /** Modelin kullanıcıya yazdığı yanıtı özetler ve kulaklığa okur. */
     suspend fun speakSummary(api: Api, ev: EvrenClient?, sessionId: String, detail: Boolean = false) {
         val client = ev ?: evren() ?: return
@@ -574,18 +606,30 @@ class VoiceFlow(
             say("Henüz bir yanıt yok.", client)
             return
         }
-        if (!client.summaryConfigured()) {
+
+        // Kısa yanıtta özet çağrısı yapmaya gerek yok: hem bir LLM çağrısı
+        // (token/maliyet) hem de 1-2 sn gecikme tasarrufu. Metin olduğu gibi,
+        // yalnızca konuşmaya uygun hâle getirilerek okunur.
+        val plain = speakable(answer)
+        val short = !detail && plain.length <= SHORT_ANSWER_CHARS &&
+            plain.count { it == '.' || it == '!' || it == '?' } <= 3
+        if (short || !client.summaryConfigured()) {
+            lastSummary = plain
             stage = Stage.IDLE
-            // Özet anahtarı yoksa yanıtın kendisini kısaca oku.
-            say(answer.take(400), client)
+            Log.d(TAG, "kısa yanıt doğrudan okunuyor (${plain.length} krk)")
+            onState("yanıt: $plain")
+            say(plain, client)
+            stage = Stage.IDLE
+            followUp(api, client, sessionId)
             return
         }
+
         onState("özetliyorum…")
         val summary = runCatching { client.summarize(answer, detail) }.getOrElse { e ->
             Log.w(TAG, "özet hatası: ${e.message}")
             stage = Stage.IDLE
             onState("özet hatası: ${e.message}")
-            say("Özet çıkaramadım. Ham yanıtı okuyorum. ${answer.take(400)}", client)
+            say("Özet çıkaramadım. Ham yanıtı okuyorum. ${plain.take(400)}", client)
             return
         }.trim()
         // Model boş metin döndürebiliyor (içerik yerine yalnızca düşünme).
@@ -593,7 +637,7 @@ class VoiceFlow(
         if (summary.length < 3) {
             Log.w(TAG, "özet boş döndü, ham yanıt okunuyor")
             stage = Stage.IDLE
-            val raw = answer.replace(Regex("\\s+"), " ").take(500)
+            val raw = plain.take(500)
             lastSummary = raw
             onState("özet: $raw")
             say(raw, client)
