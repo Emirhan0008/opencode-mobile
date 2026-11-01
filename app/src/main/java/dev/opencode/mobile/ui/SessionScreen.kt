@@ -537,36 +537,50 @@ private fun MessageCard(
             .combinedClickable(onClick = {}, onLongClick = { menu = true }),
     ) {
         when (type) {
-            "user" -> Panel(border = Oc.blue, header = "» sen") {
-                Text(msg.str("text").orEmpty(), style = MaterialTheme.typography.bodyLarge)
+            // WhatsApp düzeni: kullanıcı sağda, model solda; balon genişliği sınırlı.
+            "user" -> Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                Panel(
+                    border = Oc.userBorder,
+                    header = "» sen",
+                    modifier = Modifier.fillMaxWidth(0.82f),
+                    background = Oc.userBg,
+                    shape = RoundedCornerShape(topStart = 12.dp, topEnd = 4.dp, bottomStart = 12.dp, bottomEnd = 12.dp),
+                ) {
+                    Text(msg.str("text").orEmpty(), style = MaterialTheme.typography.bodyLarge)
+                }
             }
 
             "assistant" -> {
                 val model = msg.obj("model")
-                Panel(
-                    border = Oc.border,
-                    header = "▸ ${msg.str("agent") ?: "agent"}  ·  ${model.str("providerID")}/${model.str("id")}",
-                ) {
-                    for (raw in msg.arr("content")) {
-                        val part = raw.obj()
-                        when (part.str("type")) {
-                            "text" -> RichText(part.str("text").orEmpty())
-                            "reasoning" -> ReasoningBlock(part.str("text").orEmpty())
-                            "tool" -> ToolBlock(part)
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Start) {
+                    Panel(
+                        border = Oc.aiBorder,
+                        header = "▸ ${msg.str("agent") ?: "agent"}  ·  ${model.str("providerID")}/${model.str("id")}",
+                        modifier = Modifier.fillMaxWidth(0.92f),
+                        background = Oc.panelAlt,
+                        shape = RoundedCornerShape(topStart = 4.dp, topEnd = 12.dp, bottomStart = 12.dp, bottomEnd = 12.dp),
+                    ) {
+                        for (raw in msg.arr("content")) {
+                            val part = raw.obj()
+                            when (part.str("type")) {
+                                "text" -> RichText(part.str("text").orEmpty())
+                                "reasoning" -> ReasoningBlock(part.str("text").orEmpty())
+                                "tool" -> ToolBlock(part)
+                            }
                         }
+                        // model/sağlayıcı hatası: içerik boş kalmışsa da hata görünür olsun
+                        val err = msg.obj("error").str("message")
+                        if (err != null || msg.str("finish") == "error") {
+                            Text(
+                                "✖ " + (err ?: "yanıt üretilemedi"),
+                                color = Oc.err,
+                                style = MaterialTheme.typography.bodySmall,
+                                modifier = Modifier.padding(top = 4.dp),
+                            )
+                        }
+                        // tur özeti: süre · token · maliye · bitiş rozeti (ince ayraçla ayrılır)
+                        TurnMeta(msg)
                     }
-                    // model/sağlayıcı hatası: içerik boş kalmışsa da hata görünür olsun
-                    val err = msg.obj("error").str("message")
-                    if (err != null || msg.str("finish") == "error") {
-                        Text(
-                            "✖ " + (err ?: "yanıt üretilemedi"),
-                            color = Oc.err,
-                            style = MaterialTheme.typography.bodySmall,
-                            modifier = Modifier.padding(top = 4.dp),
-                        )
-                    }
-                    // tur özeti: süre · token · maliye · bitiş rozeti (ince ayraçla ayrılır)
-                    TurnMeta(msg)
                 }
             }
 
@@ -814,14 +828,22 @@ private fun tokenLine(tokens: JsonObject): String {
 
 @Composable
 private fun LiveCard(live: LiveMessage) {
-    Panel(border = Oc.accent, header = "▸ akıyor…") {
-        if (live.reasoning.isNotBlank()) ReasoningBlock(live.reasoning)
-        if (live.text.isNotBlank()) RichText(live.text)
-        for (tool in live.tools) {
-            LiveToolBlock(tool)
-        }
-        if (live.text.isBlank() && live.reasoning.isBlank() && live.tools.isEmpty()) {
-            Text("…", color = Oc.dim)
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Start) {
+        Panel(
+            border = Oc.accent,
+            header = "▸ akıyor…",
+            modifier = Modifier.fillMaxWidth(0.92f),
+            background = Oc.panelAlt,
+            shape = RoundedCornerShape(topStart = 4.dp, topEnd = 12.dp, bottomStart = 12.dp, bottomEnd = 12.dp),
+        ) {
+            if (live.reasoning.isNotBlank()) ReasoningBlock(live.reasoning)
+            if (live.text.isNotBlank()) RichText(live.text)
+            for (tool in live.tools) {
+                LiveToolBlock(tool)
+            }
+            if (live.text.isBlank() && live.reasoning.isBlank() && live.tools.isEmpty()) {
+                Text("…", color = Oc.dim)
+            }
         }
     }
 }
@@ -1241,15 +1263,17 @@ private fun PermissionCard(
 private fun Panel(
     border: androidx.compose.ui.graphics.Color,
     header: String,
+    modifier: Modifier = Modifier,
+    background: androidx.compose.ui.graphics.Color = Oc.panel,
+    shape: RoundedCornerShape = RoundedCornerShape(4.dp),
     content: @Composable () -> Unit,
 ) {
     Column(
-        Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(4.dp))
-            .background(Oc.panel)
-            .border(1.dp, border, RoundedCornerShape(4.dp))
-            .padding(8.dp),
+        modifier
+            .clip(shape)
+            .background(background)
+            .border(1.dp, border, shape)
+            .padding(horizontal = 9.dp, vertical = 7.dp),
     ) {
         Text(header, color = Oc.dim, style = MaterialTheme.typography.labelSmall)
         Spacer(Modifier.width(4.dp))

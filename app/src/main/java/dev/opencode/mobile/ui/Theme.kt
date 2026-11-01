@@ -30,6 +30,9 @@ class OcPalette(
     val purple: Color,
     val userBg: Color,
     val codeBg: Color,
+    /** Sohbet balonlarının çerçeve renkleri — kullanıcı ve model için ayrı. */
+    val userBorder: Color,
+    val aiBorder: Color,
 )
 
 val OcDark = OcPalette(
@@ -46,6 +49,8 @@ val OcDark = OcPalette(
     purple = Color(0xFFBC8CFF),
     userBg = Color(0xFF12202B),
     codeBg = Color(0xFF0A0E13),
+    userBorder = Color(0xFF2F81F7),   // kullanıcı balonu: parlak mavi
+    aiBorder = Color(0xFF8B6CD8),     // model balonu: mor
 )
 
 val OcLight = OcPalette(
@@ -62,6 +67,8 @@ val OcLight = OcPalette(
     purple = Color(0xFF8250DF),
     userBg = Color(0xFFDDF4FF),
     codeBg = Color(0xFFF0F3F6),
+    userBorder = Color(0xFF0969DA),
+    aiBorder = Color(0xFF8250DF),
 )
 
 /** Erişilen her özellik güncel paleti okuduğu için tema değişince ekranlar yeniden çizilir. */
@@ -86,6 +93,8 @@ object Oc {
     val purple get() = palette.purple
     val userBg get() = palette.userBg
     val codeBg get() = palette.codeBg
+    val userBorder get() = palette.userBorder
+    val aiBorder get() = palette.aiBorder
 }
 
 private fun ocColorScheme(p: OcPalette, dark: Boolean) =
