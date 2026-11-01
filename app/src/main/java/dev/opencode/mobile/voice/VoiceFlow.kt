@@ -4,6 +4,8 @@ import android.content.Context
 import android.util.Log
 import dev.opencode.mobile.data.Settings
 import dev.opencode.mobile.net.Api
+import dev.opencode.mobile.net.num
+import dev.opencode.mobile.net.obj
 import dev.opencode.mobile.net.str
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
@@ -563,15 +565,30 @@ class VoiceFlow(
         )
     }
 
+    /**
+     * Son oturumlar — **üst düzey** olanlar önce. Önceden yalnızca en yeni 6
+     * kayıt çekilip alt ajanlar ayıklandığında 5'e bile ulaşmıyordu (alt
+     * oturumlar listenin başını dolduruyordu). Artık geniş bir pencere çekilip
+     * zaman damgasına göre sıralanır; üst düzey 5'e ulaşılamazsa kalanlar da
+     * eklenir ki liste hiçbir zaman boş kalmasın.
+     */
+    private suspend fun recentSessions(api: Api, count: Int = 5): List<JsonObject> {
+        val all = runCatching { api.sessions(60) }.getOrDefault(emptyList())
+        if (all.isEmpty()) return emptyList()
+        val sorted = all.sortedByDescending { it.obj("time").num("updated") ?: 0.0 }
+        val top = sorted.filter { it.str("parentID").isNullOrBlank() }
+        if (top.size >= count) return top.take(count)
+        return (top + sorted.filterNot { it.str("parentID").isNullOrBlank() }).distinctBy { it.str("id") }
+            .take(count)
+    }
+
     /** Onaylandı → oturum sor. */
     private suspend fun confirmAndPick() {
         val text = pendingText ?: return
         val api = api() ?: return
         stage = Stage.PICKING
         val ev = evren()
-        val sessions = runCatching { api.sessions(6) }.getOrDefault(emptyList())
-            .filter { it.str("parentID").isNullOrBlank() }
-            .take(5)
+        val sessions = recentSessions(api, 5)
         if (sessions.isEmpty()) {
             onState("oturum yok")
             stage = Stage.IDLE
@@ -614,9 +631,7 @@ class VoiceFlow(
     ) {
         val ev = evren() ?: return
         val api = api() ?: return
-        val list = sessions ?: runCatching { api.sessions(6) }.getOrDefault(emptyList())
-            .filter { it.str("parentID").isNullOrBlank() }
-            .take(5)
+        val list = sessions ?: recentSessions(api, 5)
 
         if (attempt > 1) say("Bir ile beş arasında bir numara söyle.", ev)
         stage = Stage.LISTENING
@@ -694,9 +709,7 @@ class VoiceFlow(
     private suspend fun matchSession(text: String): Int? {
         if (text.isBlank()) return null
         val api = api() ?: return null
-        val sessions = runCatching { api.sessions(6) }.getOrDefault(emptyList())
-            .filter { it.str("parentID").isNullOrBlank() }
-            .take(5)
+        val sessions = recentSessions(api, 5)
         if (sessions.isEmpty()) return null
         return matchSessionIndex(text, sessions)
     }
@@ -935,9 +948,7 @@ class VoiceFlow(
         val api = api() ?: return
         val ev = evren() ?: return
         val sid = sessionId ?: targetSessionId ?: run {
-            val sessions = runCatching { api.sessions(3) }.getOrDefault(emptyList())
-                .filter { it.str("parentID").isNullOrBlank() }
-            sessions.firstOrNull()?.str("id")
+            recentSessions(api, 1).firstOrNull()?.str("id")
         } ?: run {
             onState("oturum bulunamadı")
             say("Özetlenecek oturum bulamadım.", ev)
