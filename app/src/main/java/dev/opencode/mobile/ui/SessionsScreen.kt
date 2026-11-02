@@ -1142,10 +1142,13 @@ private fun quotaLine(quota: JsonObject?): Pair<String, androidx.compose.ui.grap
 private fun trimDecimal(v: Double): String =
     "%.1f".format(v).replace('.', ',').removeSuffix(",0")
 
-/** Ham kredi metnini ("1010.0000") iki ondalıklı Türkçe biçime çevirir ("1010,00"). */
+/** Ham kredi metnini ("1010.0000") binlik ayırıcılı Türkçe biçime çevirir ("1.010,00"). */
 private fun formatCredit(raw: String?): String {
     val v = raw?.toDoubleOrNull() ?: return "?"
-    return "%.2f".format(v).replace('.', ',')
+    val nf = java.text.NumberFormat.getNumberInstance(java.util.Locale("tr", "TR"))
+    nf.minimumFractionDigits = 2
+    nf.maximumFractionDigits = 2
+    return nf.format(v)
 }
 
 /** ISO 8601 zamanı yerel saatle "dd.MM HH:mm" biçimine çevirir (bilinmiyorsa "?"). */
