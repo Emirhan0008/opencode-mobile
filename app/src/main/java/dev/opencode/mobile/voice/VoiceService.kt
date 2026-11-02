@@ -59,6 +59,7 @@ class VoiceService : Service() {
         super.onCreate()
         Notifier.init(this)
         audio = AudioEngine(this)
+        VoiceLog.init(this)
         startForegroundCompat(buildNotification(VoiceFlow.Stage.IDLE, "Sesli komut hazır — dinlemek için Dinle"))
 
         val settings = Settings(applicationContext)
@@ -106,6 +107,12 @@ class VoiceService : Service() {
             ACTION_LISTEN -> scope.launch {
                 preempt()
                 withBusy { flow.onButton() }
+            }
+            // "Bitti ✓": kullanıcı konuşmasını bitirdi. Kayıt hemen kapatılır,
+            // sessizlik/çevre sesi beklenmez; karar normal akışta verilir.
+            ACTION_FINISH -> {
+                VoiceLog.write("BİTTİ", "kullanıcı dinlemeyi bitirdi")
+                runCatching { flow.finishListening() }
             }
             ACTION_BUTTON -> {
                 val long = intent.getBooleanExtra(EXTRA_LONG, false)
@@ -473,6 +480,12 @@ class VoiceService : Service() {
             Intent(this, VoiceService::class.java).apply { action = ACTION_DISABLE },
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
+        val finish = PendingIntent.getService(
+            this,
+            6,
+            Intent(this, VoiceService::class.java).apply { action = ACTION_FINISH },
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
         val stepText = if (ui.step == 0) "hazır" else "adım ${ui.step}/5"
         val builder = NotificationCompat.Builder(this, Notifier.CHANNEL_ID)
             .setSmallIcon(android.R.drawable.ic_btn_speak_now)
@@ -490,10 +503,16 @@ class VoiceService : Service() {
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .setContentIntent(open)
         if (ui.busy) builder.setProgress(0, 0, true)
+        // Dinlerken ilk düğme "Bitti ✓": kalabalıkta çevre sesi yüzünden dinleme
+        // kapanmasa da kullanıcı konuşmasının bittiğini kendisi bildirir.
+        if (stage == VoiceFlow.Stage.LISTENING) {
+            builder.addAction(0, "Bitti ✓", finish)
+        } else {
+            builder.addAction(0, "Dinle", listen)
+        }
         // MIUI yalnızca ilk 3 düğmeyi gösterir; bu yüzden Özet en sonda
         // (stok Android'de 4'ü de görünür). Uzun basış da özet okur.
         return builder
-            .addAction(0, "Dinle", listen)
             .addAction(0, "Durdur", stop)
             .addAction(0, "Kapat", disable)
             .addAction(0, "Özet", summary)
@@ -533,6 +552,7 @@ class VoiceService : Service() {
         private const val TAG = "VoiceService"
         private const val FOREGROUND_ID = 1002
         private const val ACTION_STOP = "dev.opencode.mobile.voice.STOP"
+        private const val ACTION_FINISH = "dev.opencode.mobile.voice.FINISH"
         private const val ACTION_DISABLE = "dev.opencode.mobile.voice.DISABLE"
         private const val ACTION_BUTTON = "dev.opencode.mobile.voice.BUTTON"
         private const val EXTRA_LONG = "dev.opencode.mobile.voice.LONG"

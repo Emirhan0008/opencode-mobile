@@ -31,6 +31,18 @@ class AudioEngine(private val context: Context) {
 
     private val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
 
+    /**
+     * "Bitti ✓" düğmesine basıldığında `true` olur. Kayıt döngüsü bunu görünce
+     * sessizlik beklemeden durur — kalabalık ortamda çevre sesi yüzünden
+     * dinlemenin kapanmaması sorununu çözer.
+     */
+    @Volatile private var finishRequested = false
+
+    /** Konuşma bitti: kaydı hemen bitir (bir sonraki [record] sıfırlar). */
+    fun finishNow() {
+        finishRequested = true
+    }
+
     // ------------------------------------------------------- Bluetooth SCO
 
     private var scoDevice: AudioDeviceInfo? = null
@@ -103,6 +115,7 @@ class AudioEngine(private val context: Context) {
         silenceMs: Int = 1_200,
         noSpeechMs: Int = 6_000,
     ): ByteArray? = withContext(Dispatchers.IO) {
+        finishRequested = false
         val sampleRate = 16_000
         val minBuf = AudioRecord.getMinBufferSize(
             sampleRate,
@@ -178,6 +191,8 @@ class AudioEngine(private val context: Context) {
                 }
 
                 val silenceFor = if (speechStarted) now - lastVoiceAt else 0
+                // "Bitti ✓" düğmesi: kullanıcı konuşmasını bitirdiğini bildirdi.
+                if (finishRequested) break
                 if (speechStarted && silenceFor >= silenceMs) break
                 if (!speechStarted && elapsed >= noSpeechMs) break
                 if (elapsed >= maxMs) break

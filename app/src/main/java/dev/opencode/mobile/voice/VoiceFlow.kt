@@ -89,6 +89,12 @@ class VoiceFlow(
     /** TTS bittikten sonra mikrofonu açmadan önce beklenen süre (yankı önleme). */
     private suspend fun afterSpeechPause() = delay(500)
 
+    /** Konuşma bitti: kaydı hemen kapat (sessizlik beklemez). */
+    fun finishListening() {
+        VoiceLog.write("BİTTİ", "kayıt kapatılıyor")
+        audio.finishNow()
+    }
+
     // ------------------------------------------------------------- yardımcı
 
     private suspend fun api(): Api? {
@@ -174,6 +180,7 @@ class VoiceFlow(
 
         stage = Stage.LISTENING
         onState(if (attempt == 1) "dinliyorum…" else "tekrar dinliyorum…")
+        VoiceLog.write("DİNLE", if (attempt == 1) "başladı" else "tekrar (deneme $attempt)")
         audio.beep(start = true)
         audio.openInputRoute()
         val wav = try {
@@ -204,6 +211,7 @@ class VoiceFlow(
 
         if (text.isBlank()) {
             stage = Stage.IDLE
+            VoiceLog.write("DUYDU", "(boş)")
             if (attempt < 2) {
                 say("Anlayamadım. Bir kez daha dinliyorum.", ev)
                 listenAndConfirm(attempt + 1)
@@ -215,6 +223,7 @@ class VoiceFlow(
 
         // Uygulama komutu mu? ("ayarları aç", "yeni oturum aç", "koyu tema"…)
         // Öyleyse onay sormadan yerelde yürütülür — komutlar deterministik.
+        VoiceLog.text("DUYDU", text)
         if (handleAppCommand(text, api, ev)) return
 
         // Komut modu: tanınmayan cümle prompt olarak gönderilmez; kullanıcı
@@ -274,11 +283,16 @@ class VoiceFlow(
 
         val answer = if (wav == null) "" else runCatching { ev.transcribe(wav) }.getOrDefault("")
         onState("cevap: ${answer.ifBlank { "—" }}")
+        VoiceLog.text("CEVAP", answer)
+        VoiceLog.write("BİTTİ", "onay dinlemesi tamamlandı")
 
         val choice = parseYesNo(answer)
+        // Düzeltme cümlesi ("şunun yerine bu") oturum seçimi sayılmamalı;
+        // yoksa oturum adı eşleşmesi düzeltmeyi yutuyordu.
+        val isCorrection = parseCorrection(answer) != null || looksLikeCorrection(answer)
         // Tek nefeste onay+seçim: "evet iki", "iki", "mobile" gibi. Kısa ve
         // başka bir takip komutu olmayan cevaplarda numara/ad eşleştirilir.
-        val pick = if (choice == false) null else run {
+        val pick = if (choice == false || isCorrection) null else run {
             val words = normalize(answer).split(" ").filter { it.isNotBlank() }
             val other = parseNewCommand(answer) || parseRepeat(answer) ||
                 parseDetail(answer) || parseCancel(answer)
@@ -293,7 +307,7 @@ class VoiceFlow(
             }
             // Kısmi düzeltme: "iki yerine üç", "son kelimeyi sil", "sonuna ekle".
             // Tüm cümleyi tekrar söylemek gerekmez.
-            parseCorrection(answer) != null || looksLikeCorrection(answer) -> {
+            isCorrection -> {
                 val current = pendingText.orEmpty()
                 val edited = parseCorrection(answer)?.let { (target, repl) ->
                     replaceInText(current, target, repl)
@@ -306,6 +320,10 @@ class VoiceFlow(
                     addition != null -> applyAddition(current, addition)
                     else -> null
                 }
+                VoiceLog.write(
+                    "DÜZELTME",
+                    "eski=\"${current.take(120)}\" yeni=\"${newText?.take(120) ?: "—"}\"",
+                )
                 if (newText != null && newText.isNotBlank()) {
                     pendingText = newText
                     onState("düzeltildi: $newText")
@@ -705,6 +723,7 @@ class VoiceFlow(
                 targetSessionId = chosen.str("id")
                 val title = chosen.str("title") ?: "oturum"
                 onState("hedef: $title")
+                VoiceLog.write("OTURUM", "seçildi=\"$title\" (onay ile #$pre)")
                 say("Tamam, $title oturumuna gönderiyorum.", ev)
                 afterSpeechPause()
                 send(api, ev, chosen.str("id")!!, title)
@@ -783,6 +802,7 @@ class VoiceFlow(
         targetSessionId = chosen.str("id")
         val title = chosen.str("title") ?: "oturum"
         onState("hedef: $title")
+        VoiceLog.write("OTURUM", "seçildi=\"$title\" (cevap #${chosenIdx ?: 1})")
         say("Tamam, $title oturumuna gönderiyorum.", ev)
         afterSpeechPause()
         send(api, ev, chosen.str("id")!!, title)
@@ -835,6 +855,7 @@ class VoiceFlow(
         val text = pendingText ?: return
         val client = ev ?: evren()
         stage = Stage.SENDING
+        VoiceLog.write("GÖNDER", "oturum=\"$title\" id=$sessionId metin=\"${text.take(300)}\"")
         val before = runCatching { api.assistantText(sessionId) }.getOrDefault("")
         val sent = runCatching { api.prompt(sessionId, text) }.isSuccess
         pendingText = null
