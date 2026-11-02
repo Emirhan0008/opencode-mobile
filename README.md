@@ -133,6 +133,33 @@ Sessizlikte akış sessizce kapanır; mikrofon açık kalmaz. Konuşma sırasın
 okumayı keser. Bildirimdeki **Durdur** yalnızca süren işi keser (özellik açık kalır);
 özelliği tamamen kapatmak için **Kapat** kullanılır.
 
+### Uygulamayı sesle kontrol etme
+
+Konuşulan cümle bir **uygulama komutuysa** onay sorulmadan, yerelde ve anında
+yürütülür (LLM çağrısı yok). Tanınmazsa cümle normal prompt akışına düşer.
+
+| Söylenen | Yapar |
+|---|---|
+| "ayarları aç" / "telegramı aç" / "uygulamayı aç" | ilgili ekranı açar |
+| "oturum listesine dön" / "geri" | listeye döner |
+| "neredeyim?" | o anki ekranı söyler |
+| "oturumları listele" / "hangi oturumlar var" | son 5 oturumu okur |
+| "ikinci oturumu aç" / "fastpass oturumunu aç" | o oturumu açar |
+| "yeni oturum aç" / "deneme adında yeni oturum aç" | oturum oluşturup açar |
+| "yenile" | oturum listesini yeniler |
+| "koyu tema" / "açık tema" / "temayı değiştir" | temayı değiştirir |
+| "kotayı yenile" | kota rozetini yeniler |
+| "bildirimleri kapat" / "arka plan servisini aç" | ilgili ayarı değiştirir |
+| "sesli komutu kapat" | özelliği kapatır |
+| "plan ajanına geç" / "modeli qwen yap" | ajan/model değiştirir |
+| "son yanıtı oku" / "özetle" | son yanıtı okur |
+| "durdur" / "çalışmayı durdur" | süren turu keser |
+| "gönder yarın toplantı var" / "şunu gönder …" | açık oturuma prompt gönderir |
+| "neler yapabilirsin" | komutları okur |
+
+Komuttan sonra mikrofon yeniden açılır; zincirleme komut verilebilir. Bağlantı yokken
+de "ayarları aç" gibi komutlar çalışır.
+
 ### Yedek: kulaklık medya tuşu
 
 Medya tuşu hâlâ dinlenir (`HEADSETHOOK` / `MEDIA_PLAY_PAUSE`): kısa bas = dinle,

@@ -2,6 +2,7 @@ package dev.opencode.mobile.voice
 
 import android.content.Context
 import android.util.Log
+import dev.opencode.mobile.AppControl
 import dev.opencode.mobile.data.Settings
 import dev.opencode.mobile.net.Api
 import dev.opencode.mobile.net.num
@@ -155,10 +156,8 @@ class VoiceFlow(
             return
         }
         val api = api()
-        if (api == null) {
-            onState("OpenCode bağlantısı yok")
-            return
-        }
+        // Bağlantı yokken de uygulama komutları çalışmalı ("ayarları aç" gibi);
+        // bu yüzden erken dönmüyoruz — prompt akışında kontrol edilir.
         // Yeni bir komut başlıyor: önceki yanıtın bağlamı artık geçerli değil.
         if (attempt == 1) lastRawAnswer = null
 
@@ -200,6 +199,17 @@ class VoiceFlow(
             } else {
                 say("Anlayamadım. Hazır olduğunda dinle düğmesine bas.", ev)
             }
+            return
+        }
+
+        // Uygulama komutu mu? ("ayarları aç", "yeni oturum aç", "koyu tema"…)
+        // Öyleyse onay sormadan yerelde yürütülür — komutlar deterministik.
+        if (handleAppCommand(text, api, ev)) return
+
+        if (api == null) {
+            stage = Stage.IDLE
+            onState("OpenCode bağlantısı yok")
+            say("OpenCode bağlantısı yok. Ayarları aç dersen ayarlara gidebilirim.", ev)
             return
         }
 
@@ -957,6 +967,267 @@ class VoiceFlow(
     }
 
     /**
+     * Sesli komutla uygulamayı kontrol eder. Komut tanınırsa `true` döner ve
+     * akış burada biter; tanınmazsa `false` → cümle normal prompt olarak devam
+     * eder. Eşleştirme yereldir (LLM çağrısı yok), bu yüzden anında çalışır.
+     */
+    private suspend fun handleAppCommand(text: String, api: Api?, ev: EvrenClient): Boolean {
+        val cmd = AppCommandParser.parse(text) ?: return false
+        Log.d(TAG, "uygulama komutu: ${cmd.action} arg=${cmd.arg} no=${cmd.number}")
+        onState("komut: ${cmd.action.name.lowercase()}")
+        stage = Stage.IDLE
+
+        when (cmd.action) {
+            AppAction.HELP -> {
+                val help = "Şunları yapabilirim: ayarları aç, yeni oturum aç, birinci oturumu aç, " +
+                    "oturumları listele, koyu tema, açık tema, kotayı yenile, son yanıtı oku, " +
+                    "durdur, ve gönder dediğinde bir istek gönder."
+                say(help, ev)
+                listenAgain(api, ev)
+            }
+
+            AppAction.OPEN_APP -> {
+                AppControl.launch(context, AppControl.Dest.APP)
+                say("Uygulamayı açtım.", ev)
+            }
+
+            AppAction.OPEN_SETTINGS -> {
+                AppControl.onMain { it.openSettings() }
+                AppControl.launch(context, AppControl.Dest.SETTINGS)
+                say("Ayarları açtım.", ev)
+            }
+
+            AppAction.OPEN_TELEGRAM -> {
+                AppControl.onMain { it.openTelegram() }
+                AppControl.launch(context, AppControl.Dest.TELEGRAM)
+                say("Telegram ayarlarını açtım.", ev)
+            }
+
+            AppAction.BACK -> {
+                val vm = AppControl.viewModel()
+                if (vm != null) AppControl.onMain { it.goBack() }
+                else AppControl.launch(context, AppControl.Dest.SESSIONS)
+                say("Oturum listesine döndüm.", ev)
+            }
+
+            AppAction.WHERE -> {
+                val where = if (AppControl.viewModel() != null) AppControl.screenName()
+                else "uygulama şu an kapalı"
+                say("Şu an $where.", ev)
+                listenAgain(api, ev)
+            }
+
+            AppAction.LIST_SESSIONS -> {
+                val a = api ?: return noConnection(ev)
+                val sessions = recentSessions(a, 5)
+                if (sessions.isEmpty()) {
+                    say("Oturum bulamadım.", ev)
+                } else {
+                    val list = sessions.mapIndexed { i, s ->
+                        "${i + 1}. ${s.str("title")?.take(48) ?: "oturum"}"
+                    }
+                    say("Son oturumlar: ${list.joinToString(". ")}.", ev)
+                }
+                listenAgain(api, ev, sessions.firstOrNull()?.str("id"))
+            }
+
+            AppAction.OPEN_SESSION -> {
+                val a = api ?: return noConnection(ev)
+                val sessions = recentSessions(a, 5)
+                val idx = cmd.number?.minus(1)
+                    ?: cmd.arg?.let { matchSessionIndex(it, sessions) }
+                val chosen = idx?.let { sessions.getOrNull(it) }
+                if (chosen == null) {
+                    say("O oturumu bulamadım. Oturumları listele dersen sayabilirim.", ev)
+                    listenAgain(api, ev)
+                } else {
+                    openSessionById(chosen.str("id"), chosen.str("title") ?: "oturum", ev)
+                    listenAgain(api, ev, chosen.str("id"))
+                }
+            }
+
+            AppAction.NEW_SESSION -> {
+                val a = api ?: return noConnection(ev)
+                val created = runCatching { a.createSession(cmd.arg?.ifBlank { null }) }.getOrNull()
+                val id = created?.str("id")
+                if (id == null) {
+                    say("Yeni oturum açamadım.", ev)
+                    listenAgain(api, ev)
+                } else {
+                    val title = created.str("title") ?: cmd.arg ?: "Yeni oturum"
+                    AppControl.onMain { vm -> vm.refreshSessions() }
+                    openSessionById(id, title, ev)
+                    listenAgain(api, ev, id)
+                }
+            }
+
+            AppAction.REFRESH -> {
+                val vm = AppControl.viewModel()
+                if (vm != null) {
+                    AppControl.onMain { it.refreshSessions() }
+                    say("Yeniledim.", ev)
+                } else {
+                    say("Yenilemek için uygulamayı açtım.", ev)
+                }
+                AppControl.launch(context, AppControl.Dest.APP)
+                listenAgain(api, ev)
+            }
+
+            AppAction.THEME_DARK, AppAction.THEME_LIGHT, AppAction.THEME_TOGGLE -> {
+                val current = AppControl.viewModel()?.voiceDarkTheme()
+                    ?: settings.darkTheme.first()
+                val dark = when (cmd.action) {
+                    AppAction.THEME_DARK -> true
+                    AppAction.THEME_LIGHT -> false
+                    else -> !current
+                }
+                settings.setDarkTheme(dark)
+                AppControl.onMain { it.setDarkTheme(dark) }
+                say(if (dark) "Koyu temaya geçtim." else "Açık temaya geçtim.", ev)
+                listenAgain(api, ev)
+            }
+
+            AppAction.QUOTA -> {
+                if (AppControl.viewModel() != null) {
+                    AppControl.onMain { it.refreshQuota() }
+                    say("Kota bilgisini yeniledim; oturum listesindeki rozette görebilirsin.", ev)
+                } else {
+                    AppControl.launch(context, AppControl.Dest.APP)
+                    say("Kotayı görmek için uygulamayı açtım.", ev)
+                }
+                listenAgain(api, ev)
+            }
+
+            AppAction.NOTIFY_ON, AppAction.NOTIFY_OFF -> {
+                val enabled = cmd.action == AppAction.NOTIFY_ON
+                settings.setNotifyPermissions(enabled)
+                say(if (enabled) "Bildirimleri açtım." else "Bildirimleri kapattım.", ev)
+                listenAgain(api, ev)
+            }
+
+            AppAction.BACKGROUND_ON, AppAction.BACKGROUND_OFF -> {
+                val enabled = cmd.action == AppAction.BACKGROUND_ON
+                settings.setBackgroundService(enabled)
+                say(if (enabled) "Arka plan servisini açtım." else "Arka plan servisini kapattım.", ev)
+                listenAgain(api, ev)
+            }
+
+            AppAction.VOICE_OFF -> {
+                say("Sesli komutu kapatıyorum.", ev)
+                settings.setVoiceEnabled(false)
+            }
+
+            AppAction.SWITCH_AGENT -> {
+                val name = cmd.arg
+                if (name.isNullOrBlank()) {
+                    say("Hangi ajana geçeyim?", ev)
+                    listenAgain(api, ev)
+                    return true
+                }
+                val ok = if (AppControl.viewModel() != null) {
+                    AppControl.viewModel()!!.voiceSwitchAgent(name)
+                } else {
+                    val sid = commandSessionId(api)
+                    sid != null && api != null && runCatching { api.switchAgent(sid, name) }.isSuccess
+                }
+                say(if (ok) "$name ajanına geçtim." else "Ajanı değiştiremedim; bir oturum açık olmalı.", ev)
+                listenAgain(api, ev)
+            }
+
+            AppAction.SWITCH_MODEL -> {
+                val name = cmd.arg
+                val vm = AppControl.viewModel()
+                val ok = vm != null && !name.isNullOrBlank() && vm.voiceSwitchModel(name)
+                if (ok) {
+                    say("Modeli değiştirdim.", ev)
+                } else {
+                    say("Modeli değiştiremedim; oturum açık olmalı ve model listede bulunmalı.", ev)
+                }
+                listenAgain(api, ev)
+            }
+
+            AppAction.READ_LAST -> {
+                val a = api ?: return noConnection(ev)
+                val sid = commandSessionId(a)
+                if (sid == null) {
+                    say("Okuyacak oturum bulamadım.", ev)
+                } else {
+                    summarizeLast(sid)
+                }
+            }
+
+            AppAction.INTERRUPT -> {
+                val a = api ?: return noConnection(ev)
+                val sid = commandSessionId(a)
+                if (sid == null) {
+                    say("Durdurulacak bir oturum yok.", ev)
+                } else {
+                    val ok = runCatching { a.interrupt(sid) }.isSuccess
+                    say(if (ok) "Durdurdum." else "Durdurulamadı.", ev)
+                }
+                listenAgain(api, ev)
+            }
+
+            AppAction.SEND -> {
+                val body = cmd.arg?.trim()
+                val a = api ?: return noConnection(ev)
+                val sid = commandSessionId(a)
+                if (body.isNullOrBlank()) {
+                    say("Ne göndereyim?", ev)
+                    listenAgain(api, ev)
+                } else if (sid == null) {
+                    say("Gönderecek oturum bulamadım.", ev)
+                } else {
+                    val title = runCatching { a.session(sid).str("title") }
+                        .getOrNull() ?: "oturum"
+                    pendingText = body
+                    onState("duyduğum: $body")
+                    send(a, ev, sid, title)
+                }
+            }
+        }
+        return true
+    }
+
+    /** Bağlantı yokken komut: sesli bilgi ver ve akışı bitir. */
+    private suspend fun noConnection(ev: EvrenClient): Boolean {
+        stage = Stage.IDLE
+        onState("OpenCode bağlantısı yok")
+        say("OpenCode bağlantısı yok. Ayarları aç dersen ayarlara gidebilirim.", ev)
+        return true
+    }
+
+    /** Komut sonrası mikrofonu yeniden açar (zincirleme komut için). */
+    private suspend fun listenAgain(api: Api?, ev: EvrenClient, sessionId: String? = null) {
+        val sid = sessionId ?: commandSessionId(api) ?: return
+        val a = api ?: return
+        followUp(a, ev, sid)
+    }
+
+    /** Komut için hedef oturum: açık oturum → son hedef → en yeni oturum. */
+    private suspend fun commandSessionId(api: Api?): String? =
+        AppControl.viewModel()?.voiceCurrentSessionId()
+            ?: targetSessionId
+            ?: api?.let { recentSessions(it, 1).firstOrNull()?.str("id") }
+
+    /** Oturumu açar: uygulama yaşıyorsa doğrudan, değilse niyet ile. */
+    private suspend fun openSessionById(id: String?, title: String, ev: EvrenClient) {
+        if (id == null) return
+        targetSessionId = id
+        val vm = AppControl.viewModel()
+        if (vm != null) {
+            AppControl.onMain {
+                it.refreshSessions()
+                it.openSession(id)
+            }
+            AppControl.launch(context, AppControl.Dest.APP)
+        } else {
+            AppControl.launch(context, AppControl.Dest.SESSION, id)
+        }
+        say("$title oturumunu açtım.", ev)
+    }
+
+    /**
      * Özet sonrası eller serbest takip komutları. Kullanıcı ekrana bakmadan
      * zinciri sürdürebilsin diye en fazla [MAX_FOLLOW_UPS] kez dinlenir.
      */
@@ -986,6 +1257,10 @@ class VoiceFlow(
             return
         }
         onState("takip: $answer")
+
+        // Takip sırasında da uygulama komutu verilebilir ("ayarları aç",
+        // "koyu tema", "yeni oturum aç"…).
+        if (handleAppCommand(answer, api, ev)) return
 
         when {
             // "tekrar oku / ne dedin" önce: bunlar soru sözcüğü içerebilir.

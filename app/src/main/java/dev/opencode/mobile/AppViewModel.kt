@@ -1053,6 +1053,40 @@ class AppViewModel(
 
     private fun currentSessionId(): String? = (_screen.value as? Screen.Session)?.id
 
+    /** Sesli komut köprüsü için: açık oturum kimliği (yoksa null). */
+    fun voiceCurrentSessionId(): String? = currentSessionId()
+
+    /** Sesli komut: "koyu tema" gibi isteklerde mevcut durum. */
+    fun voiceDarkTheme(): Boolean = _darkTheme.value
+
+    /** Sesli komut: ajanı ada göre değiştirir; oturum açık değilse false. */
+    fun voiceSwitchAgent(name: String?): Boolean {
+        val agent = name?.trim().takeUnless { it.isNullOrBlank() } ?: return false
+        if (currentSessionId() == null) return false
+        switchAgent(agent)
+        return true
+    }
+
+    /**
+     * Sesli komut: modeli sorguyla değiştirir (id veya ad parçası). Listede
+     * eşleşme yoksa false. Sağlayıcı kimliği modelden alınır.
+     */
+    fun voiceSwitchModel(query: String?): Boolean {
+        val q = query?.trim()?.lowercase()?.takeUnless { it.isBlank() } ?: return false
+        if (currentSessionId() == null) return false
+        val model = _models.value.firstOrNull { m ->
+            val id = m.str("id").orEmpty().lowercase()
+            val name = m.str("name").orEmpty().lowercase()
+            id.contains(q) || name.contains(q)
+        } ?: return false
+        switchModel(
+            providerID = model.str("providerID") ?: return false,
+            modelID = model.str("id") ?: return false,
+            variant = model.str("variant"),
+        )
+        return true
+    }
+
     // ------------------------------------------------------------- sessions
 
     fun refreshSessions() {

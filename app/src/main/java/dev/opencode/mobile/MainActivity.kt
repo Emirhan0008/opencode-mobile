@@ -40,6 +40,9 @@ class MainActivity : ComponentActivity() {
     /** Bildirimden gelen oturum kimliği — açıldıktan sonra tüketilir. */
     private var pendingSessionId by mutableStateOf<String?>(null)
 
+    /** Sesli komutun istediği hedef ekran (varsa) — tüketilince temizlenir. */
+    private var pendingDest by mutableStateOf<String?>(null)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         // Android 15 (targetSdk 35) edge-to-edge zorunlu kılar; tüm sürümlerde tutarlı
         // davranış için açıkça etkinleştiriyoruz ve ekranlar inset boşluğu uyguluyor.
@@ -50,11 +53,20 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         requestNotificationPermission()
         pendingSessionId = intent?.getStringExtra(Notifier.EXTRA_SESSION_ID)
+        pendingDest = intent?.getStringExtra(EXTRA_DEST)
         setContent {
             val vm: AppViewModel = viewModel(factory = AppViewModel.Factory(LocalContext.current))
             val dark by vm.darkTheme.collectAsState()
+            // Sesli komut servisi ViewModel'e bu köprüyle ulaşır (uygulama yaşarken).
+            androidx.compose.runtime.DisposableEffect(vm) {
+                AppControl.attach(vm)
+                onDispose { AppControl.detach(vm) }
+            }
             OpenCodeTheme(dark = dark) {
-                Root(vm, dark, pendingSessionId) { pendingSessionId = null }
+                Root(vm, dark, pendingSessionId, pendingDest) {
+                    pendingSessionId = null
+                    pendingDest = null
+                }
             }
         }
     }
@@ -63,6 +75,7 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         pendingSessionId = intent.getStringExtra(Notifier.EXTRA_SESSION_ID)
+        pendingDest = intent.getStringExtra(EXTRA_DEST)
     }
 
     override fun onStart() {
@@ -116,6 +129,14 @@ class MainActivity : ComponentActivity() {
             ActivityCompat.requestPermissions(this, wanted.toTypedArray(), 1002)
         }
     }
+
+    companion object {
+        const val EXTRA_DEST = "dev.opencode.mobile.DEST"
+        const val DEST_SETTINGS = "settings"
+        const val DEST_TELEGRAM = "telegram"
+        const val DEST_SESSIONS = "sessions"
+        const val DEST_SESSION = "session"
+    }
 }
 
 @Composable
@@ -123,6 +144,7 @@ private fun Root(
     vm: AppViewModel,
     dark: Boolean,
     openSessionId: String?,
+    openDest: String?,
     onOpenSessionConsumed: () -> Unit,
 ) {
     val screen by vm.screen.collectAsState()
@@ -203,12 +225,16 @@ private fun Root(
         }
     }
 
-    // Bildirimden gelen oturum isteği (kolaylık) — varsa aç ve tüket.
-    LaunchedEffect(openSessionId) {
-        if (openSessionId != null) {
-            vm.openSession(openSessionId)
-            onOpenSessionConsumed()
+    // Bildirimden/sesli komuttan gelen hedef (kolaylık) — varsa aç ve tüket.
+    LaunchedEffect(openSessionId, openDest) {
+        when (openDest) {
+            MainActivity.DEST_SETTINGS -> vm.openSettings()
+            MainActivity.DEST_TELEGRAM -> vm.openTelegram()
+            MainActivity.DEST_SESSIONS -> vm.goBack()
+            MainActivity.DEST_SESSION -> if (openSessionId != null) vm.openSession(openSessionId)
+            else -> if (openSessionId != null) vm.openSession(openSessionId)
         }
+        if (openSessionId != null || openDest != null) onOpenSessionConsumed()
     }
 
     when (val s = screen) {
