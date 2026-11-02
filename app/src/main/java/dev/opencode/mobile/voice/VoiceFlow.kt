@@ -75,6 +75,17 @@ class VoiceFlow(
     /** Aynı yanıt için kaç kez takip komutu dinlendiği (sonsuz döngü koruması). */
     private var followUps = 0
 
+    /**
+     * `true` iken dinlenen cümle **yalnızca uygulama komutu** olarak yorumlanır;
+     * prompt akışına (onay → oturum seç → gönder) hiç girilmez.
+     *
+     * Kullanıcı "diğer moda geç" dediğinde bu bayrak döner ve servis yaşadığı
+     * sürece korunur — her dinlemede yeniden söylemek gerekmez.
+     */
+    @Volatile
+    var commandMode = false
+        private set
+
     /** TTS bittikten sonra mikrofonu açmadan önce beklenen süre (yankı önleme). */
     private suspend fun afterSpeechPause() = delay(500)
 
@@ -205,6 +216,17 @@ class VoiceFlow(
         // Uygulama komutu mu? ("ayarları aç", "yeni oturum aç", "koyu tema"…)
         // Öyleyse onay sormadan yerelde yürütülür — komutlar deterministik.
         if (handleAppCommand(text, api, ev)) return
+
+        // Komut modu: tanınmayan cümle prompt olarak gönderilmez; kullanıcı
+        // yalnızca komut verebilir. Yanlış duyulmuş olabilir, kısaca uyarıp
+        // tekrar dinlenir (akış ölmez).
+        if (commandMode) {
+            stage = Stage.IDLE
+            onState("komut anlaşılmadı: $text")
+            say("Komut olarak anlayamadım. Yalnızca komut veriyorsun. Yardım için ne yapabilirsin de.", ev)
+            listenAgain(api, ev)
+            return
+        }
 
         if (api == null) {
             stage = Stage.IDLE
@@ -978,10 +1000,50 @@ class VoiceFlow(
         stage = Stage.IDLE
 
         when (cmd.action) {
+            AppAction.MODE_COMMAND -> {
+                commandMode = true
+                say(
+                    "Komut moduna geçtim. Artık sadece komut dinliyorum: " +
+                        "ayarları aç, oturumları listele, ikinci oturumu aç, koyu tema, kota, durdur. " +
+                        "Prompt göndermek için normal moda geç de.",
+                    ev,
+                )
+                listenAgain(api, ev)
+            }
+
+            AppAction.MODE_PROMPT -> {
+                commandMode = false
+                say(
+                    "Normal moda geçtim. Söylediğini istek olarak alıp onaya sunacağım.",
+                    ev,
+                )
+                listenAgain(api, ev)
+            }
+
+            AppAction.MODE_TOGGLE -> {
+                commandMode = !commandMode
+                say(
+                    if (commandMode) {
+                        "Komut moduna geçtim. Sadece komut dinliyorum. Prompt için normal moda geç de."
+                    } else {
+                        "Normal moda geçtim. Artık söylediğini istek olarak göndereceğim."
+                    },
+                    ev,
+                )
+                listenAgain(api, ev)
+            }
+
             AppAction.HELP -> {
-                val help = "Şunları yapabilirim: ayarları aç, yeni oturum aç, birinci oturumu aç, " +
-                    "oturumları listele, koyu tema, açık tema, kotayı yenile, son yanıtı oku, " +
-                    "durdur, ve gönder dediğinde bir istek gönder."
+                val help = if (commandMode) {
+                    "Komut modundayım. Ayarları aç, yeni oturum aç, birinci oturumu aç, " +
+                        "oturumları listele, koyu tema, açık tema, kota, son yanıtı oku, durdur. " +
+                        "Prompt moduna dönmek için normal moda geç de."
+                } else {
+                    "Şunları yapabilirim: ayarları aç, yeni oturum aç, birinci oturumu aç, " +
+                        "oturumları listele, koyu tema, açık tema, kotayı yenile, son yanıtı oku, " +
+                        "durdur, ve gönder dediğinde bir istek gönder. " +
+                        "Sadece komut vermek istersen komut moduna geç de."
+                }
                 say(help, ev)
                 listenAgain(api, ev)
             }
@@ -1261,6 +1323,15 @@ class VoiceFlow(
         // Takip sırasında da uygulama komutu verilebilir ("ayarları aç",
         // "koyu tema", "yeni oturum aç"…).
         if (handleAppCommand(answer, api, ev)) return
+
+        // Komut modunda takip cümlesi prompt/soru olarak yorumlanmaz.
+        if (commandMode) {
+            followUps = 0
+            stage = Stage.IDLE
+            onState("komut anlaşılmadı: $answer")
+            listenAgain(api, ev, sessionId)
+            return
+        }
 
         when {
             // "tekrar oku / ne dedin" önce: bunlar soru sözcüğü içerebilir.

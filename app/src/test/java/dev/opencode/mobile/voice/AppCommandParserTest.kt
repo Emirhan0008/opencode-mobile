@@ -49,7 +49,38 @@ class AppCommandParserTest {
     }
 
     @Test
-    fun agentAndModel() {
+    fun modeSwitching() {
+        assertEquals(AppAction.MODE_TOGGLE, parse("diğer moda geç")?.action)
+        assertEquals(AppAction.MODE_TOGGLE, parse("diğer moda geçsene")?.action)
+        assertEquals(AppAction.MODE_TOGGLE, parse("diğer modu aç")?.action)
+        assertEquals(AppAction.MODE_TOGGLE, parse("diğer moda geçelim")?.action)
+        assertEquals(AppAction.MODE_COMMAND, parse("komut moduna geç")?.action)
+        assertEquals(AppAction.MODE_PROMPT, parse("normal moda geç")?.action)
+        assertEquals(AppAction.MODE_PROMPT, parse("prompt moduna geç")?.action)
+    }
+
+    @Test
+    fun turkishVariants() {
+        // Aynı komut, farklı söylenme biçimleri
+        assertEquals(AppAction.OPEN_SETTINGS, parse("ayarlar ekranını açar mısın")?.action)
+        assertEquals(AppAction.OPEN_SETTINGS, parse("ayarlara gidelim")?.action)
+        assertEquals(AppAction.THEME_LIGHT, parse("aydınlık moda geç")?.action)
+        assertEquals(AppAction.THEME_DARK, parse("gece moduna geçsene")?.action)
+        assertEquals(AppAction.QUOTA, parse("ne kadar kredim kaldı")?.action)
+        assertEquals(AppAction.QUOTA, parse("bakiyemi göster")?.action)
+        assertEquals(AppAction.LIST_SESSIONS, parse("son oturumları sayar mısın")?.action)
+        assertEquals(AppAction.NEW_SESSION, parse("yeni bir sohbet açar mısın")?.action)
+        assertEquals(AppAction.READ_LAST, parse("son cevabı okur musun")?.action)
+        assertEquals(AppAction.INTERRUPT, parse("çalışmayı kes")?.action)
+        assertEquals(AppAction.BACK, parse("bir önceki ekrana dön")?.action)
+        assertEquals(AppAction.REFRESH, parse("listeyi tazele")?.action)
+        assertEquals(AppAction.HELP, parse("hangi komutlar var")?.action)
+    }
+
+    @Test
+    fun modelCommandIsNotTheme() {
+        assertEquals(AppAction.SWITCH_MODEL, parse("modeli qwen yap")?.action)
+        assertEquals(AppAction.SWITCH_AGENT, parse("plan ajanına geç")?.action)
         assertEquals("plan", parse("plan ajanına geç")?.arg)
         assertEquals("plan", parse("ajanı plan yap")?.arg)
         assertEquals("qwen", parse("modeli qwen yap")?.arg)
