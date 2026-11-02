@@ -99,6 +99,8 @@ fun SessionsScreen(
     onToggleTheme: () -> Unit,
     /** Evren kota yanıtı (yoksa şerit gösterilmez). */
     quota: JsonObject? = null,
+    /** EVREN'e bakan tüm anahtarların kotası (H1/H2…). Doluysa alt alta çizilir. */
+    quotas: List<dev.opencode.mobile.QuotaRow> = emptyList(),
     quotaError: Boolean = false,
     quotaLoading: Boolean = false,
     /** Kota şeridi açık mı (ayarlardan kapatılabilir). */
@@ -268,41 +270,33 @@ fun SessionsScreen(
 
                 // ---------------------------------------------------- kota şeridi
                 // Yalnızca rozet açıkken ve gösterilecek bir şey varsa çizilir.
-                if (quotaBadge && (quota != null || quotaError || quotaLoading)) {
-                    val (label, color) = when {
-                        quota != null -> {
-                            val remaining = quota.num("daily_remaining_tokens")?.toLong() ?: 0L
-                            val limit = quota.num("daily_limit_tokens")?.toLong() ?: 0L
-                            val pct = if (limit > 0) remaining.toDouble() / limit * 100.0 else 0.0
-                            val credit = formatCredit(quota.str("remaining_cr"))
-                            val reset = formatReset(quota.str("daily_reset_at"))
-                            val c = when (quota.str("level")) {
-                                "ok" -> Oc.accent
-                                "warn" -> Oc.warn
-                                else -> Oc.err
-                            }
-                            val text = "⚡ kota ${formatTokens(remaining)}/${formatTokens(limit)} krk " +
-                                "(%${"%.0f".format(pct)}) · $credit kr · ⟳ $reset"
-                            text to c
-                        }
-                        quotaLoading -> "⚡ kota yükleniyor…" to Oc.dim
-                        else -> "⚡ kota alınamadı · dokun ve yeniden dene" to Oc.dim
-                    }
-                    Row(
+                // Birden çok EVREN anahtarı varsa H1/H2… olarak alt alta.
+                if (quotaBadge && (quotas.isNotEmpty() || quota != null || quotaError || quotaLoading)) {
+                    Column(
                         modifier = Modifier
                             .fillMaxWidth()
                             .background(Oc.panelAlt)
                             .clickable(onClick = onRefreshQuota)
                             .padding(horizontal = 12.dp, vertical = 4.dp),
-                        verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Text(
-                            label,
-                            color = color,
-                            style = MaterialTheme.typography.labelSmall,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
+                        if (quotas.isNotEmpty()) {
+                            quotas.forEach { row -> QuotaLine(row) }
+                        } else {
+                            val (label, color) = if (quota != null) {
+                                quotaLine(quota) ?: ("⚡ kota" to Oc.dim)
+                            } else if (quotaLoading) {
+                                "⚡ kota yükleniyor…" to Oc.dim
+                            } else {
+                                "⚡ kota alınamadı · dokun ve yeniden dene" to Oc.dim
+                            }
+                            Text(
+                                label,
+                                color = color,
+                                style = MaterialTheme.typography.labelSmall,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
                     }
                 }
 
@@ -1104,8 +1098,41 @@ fun formatElapsed(seconds: Long): String {
     return "${hours / 24} gün"
 }
 
-/** Token sayısını kısa biçime çevirir: 148000 -> "148k", 14800000 -> "14,8M". */
-private fun formatTokens(n: Long): String = when {
+/**
+ * Kota şeridinde tek bir anahtarın satırı: `H1 ⚡ 14,6M/15,0M krk (%97) · 0,00 kr · ⟳ 03.11 03:00`.
+ * Renk `level` alanına göre (`ok`/`warn`/diğer).
+ */
+@Composable
+private fun QuotaLine(row: dev.opencode.mobile.QuotaRow) {
+    val (text, color) = quotaLine(row.data) ?: ("⚡ kota" to Oc.dim)
+    Text(
+        "${row.label} · $text",
+        color = color,
+        style = MaterialTheme.typography.labelSmall,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+    )
+}
+
+/** Ham EVREN `/quota` yanıtını `(metin, renk)` çiftine çevirir. */
+private fun quotaLine(quota: JsonObject?): Pair<String, androidx.compose.ui.graphics.Color>? {
+    if (quota == null) return null
+    val remaining = quota.num("daily_remaining_tokens")?.toLong() ?: 0L
+    val limit = quota.num("daily_limit_tokens")?.toLong() ?: 0L
+    val pct = if (limit > 0) remaining.toDouble() / limit * 100.0 else 0.0
+    val credit = formatCredit(quota.str("remaining_cr"))
+    val reset = formatReset(quota.str("daily_reset_at"))
+    val color = when (quota.str("level")) {
+        "ok" -> Oc.accent
+        "warn" -> Oc.warn
+        else -> Oc.err
+    }
+    val text = "⚡ ${formatTokens(remaining)}/${formatTokens(limit)} krk " +
+        "(%${"%.0f".format(pct)}) · $credit kr · ⟳ $reset"
+    return text to color
+}
+
+/** Token sayısını kısa biçime çevirir: 148000 -> "148k", 14800000 -> "14,8M". */private fun formatTokens(n: Long): String = when {
     n >= 1_000_000 -> trimDecimal(n / 1_000_000.0) + "M"
     n >= 1_000 -> trimDecimal(n / 1_000.0) + "k"
     else -> n.toString()

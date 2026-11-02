@@ -178,6 +178,7 @@ private fun Root(
     val notifyForms by vm.notifyForms.collectAsState()
     val notifyWork by vm.notifyWork.collectAsState()
     val quota by vm.quota.collectAsState()
+    val quotas by vm.quotas.collectAsState()
     val quotaError by vm.quotaError.collectAsState()
     val quotaLoading by vm.quotaLoading.collectAsState()
     val quotaBadge by vm.quotaBadge.collectAsState()
@@ -296,6 +297,7 @@ private fun Root(
             onOpenSettings = vm::openSettings,
             onOpenTelegram = vm::openTelegram,
             quota = quota,
+            quotas = quotas,
             quotaError = quotaError,
             quotaLoading = quotaLoading,
             quotaBadge = quotaBadge,

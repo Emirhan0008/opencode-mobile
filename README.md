@@ -160,6 +160,24 @@ yürütülür (LLM çağrısı yok). Tanınmazsa cümle normal prompt akışına
 Komuttan sonra mikrofon yeniden açılır; zincirleme komut verilebilir. Bağlantı yokken
 de "ayarları aç" gibi komutlar çalışır.
 
+### Kota şeridi
+
+Oturum listesinin üstündeki şerit, `/api/model` yanıtında **EVREN'e bakan tüm
+anahtarları** (`baseURL` içinde `evren` geçenler) bulur ve her biri için
+`GET {baseURL}/quota` çağırır. Sonuçlar anahtar sırasına göre **H1, H2…** olarak
+alt alta gösterilir:
+
+```
+H1 · ⚡ 14,6M/15,0M krk (%97) · 0,00 kr · ⟳ 03.11 03:00
+H2 · ⚡ 15,0M/15,0M krk (%100) · 1.010,00 kr · ⟳ 03.11 03:00
+```
+
+- Anahtarlar `apiKey` değerine göre tekilleştirilir; anahtar değeri UI'ya taşınmaz.
+- Renk `level` alanına göre: `ok` → vurgu, `warn` → uyarı, diğer → hata.
+- Şeride dokunmak kotayı yeniler; Ayarlar → "Kota rozeti" ile tamamen kapatılabilir.
+- OpenCode sağlayıcısının (`apiKey = "public"`) kendi `/quota` ucu yoktur; bu yüzden
+  şerit yalnızca EVREN anahtarlarını gösterir.
+
 ### Yedek: kulaklık medya tuşu
 
 Medya tuşu hâlâ dinlenir (`HEADSETHOOK` / `MEDIA_PLAY_PAUSE`): kısa bas = dinle,

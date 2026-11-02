@@ -90,6 +90,15 @@ data class SessionsState(
     val error: String? = null,
 )
 
+/**
+ * Tek bir EVREN anahtarının kotası. `label` = "H1", "H2"…; anahtar değeri
+ * UI'ya hiç taşınmaz (yalnızca sıra numarası ve kota verisi).
+ */
+data class QuotaRow(
+    val label: String,
+    val data: JsonObject,
+)
+
 data class SessionState(
     val loading: Boolean = false,
     val session: JsonObject? = null,
@@ -220,6 +229,14 @@ class AppViewModel(
     /** Evren kotası yanıtı (yoksa null — şerit gösterilmez). */
     private val _quota = MutableStateFlow<JsonObject?>(null)
     val quota: StateFlow<JsonObject?> = _quota.asStateFlow()
+
+    /**
+     * EVREN'e bakan **tüm** anahtarların kotası, H1/H2… olarak. Kurulumda
+     * birden çok anahtar olabiliyor (ör. `evren` + `opencode-api` sağlayıcı
+     * adları, ikisi de aynı baseURL). Önceden yalnızca ilki gösteriliyordu.
+     */
+    private val _quotas = MutableStateFlow<List<QuotaRow>>(emptyList())
+    val quotas: StateFlow<List<QuotaRow>> = _quotas.asStateFlow()
 
     /** Kota sorgusu başarısız mı (şeritte "alınamadı" göstergesi). */
     private val _quotaError = MutableStateFlow(false)
@@ -1674,38 +1691,43 @@ $startCmd
     }
 
     /**
-     * Evren kotasını tazeler. `GET /api/model` yanıtındaki evren modelinin `settings`
-     * alanındaki baseURL + apiKey ile `GET {baseURL}/quota` çağrılır. Evren sağlayıcısı
-     * yoksa (baseURL/apiKey boş) bayat veri temizlenir ve şerit gizlenir.
+     * EVREN kotasını tazeler. `/api/model` yanıtındaki **her** EVREN anahtarı
+     * için `GET {baseURL}/quota` çağrılır ve sonuçlar H1/H2… olarak sıralanır.
+     *
+     * Neden tümü: aynı baseURL'e bakan birden çok sağlayıcı kaydı olabiliyor
+     * (`evren`, `opencode-api`); önceden yalnızca ilki gösterildiği için ikinci
+     * anahtarın kotası hiç görünmüyordu. Aynı anahtar birden çok modelde
+     * tekrarlandığı için anahtar değerine göre tekilleştirilir.
      */
     fun refreshQuota() {
         val current = api
-        val model = _models.value.firstOrNull { it.str("providerID") == "evren" }
-            ?: _models.value.firstOrNull {
-                it.obj("settings").str("baseURL")?.contains("evren", ignoreCase = true) == true
+        val creds = _models.value
+            .map { it.obj("settings") }
+            .mapNotNull { cfg ->
+                val base = cfg.str("baseURL")?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+                if (!base.contains("evren", ignoreCase = true)) return@mapNotNull null
+                val key = cfg.str("apiKey")?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+                base.trimEnd('/') to key
             }
-        val cfg = model?.obj("settings")
-        val base = cfg?.str("baseURL")?.takeIf { it.isNotBlank() }
-        val key = cfg?.str("apiKey")?.takeIf { it.isNotBlank() }
-        if (current == null || base == null || key == null) {
+            .distinctBy { it.second }
+        if (current == null || creds.isEmpty()) {
             // Evren sağlayıcısı yok: önceki sunucudan kalan bayat veriyi temizle.
             _quota.value = null
+            _quotas.value = emptyList()
             _quotaError.value = false
             _quotaLoading.value = false
             return
         }
         viewModelScope.launch {
             _quotaLoading.value = true
-            runCatching { current.quota(base, key) }
-                .onSuccess {
-                    _quota.value = it
-                    _quotaError.value = false
-                }
-                .onFailure {
-                    // Başarısız çekimde eski değeri bırakma; hata durumu yüzeye çıksın.
-                    _quota.value = null
-                    _quotaError.value = true
-                }
+            val rows = creds.mapIndexed { i, (base, key) ->
+                val data = runCatching { current.quota(base, key) }.getOrNull()
+                data?.let { QuotaRow(label = "H${i + 1}", data = it) }
+            }.filterNotNull()
+            _quotas.value = rows
+            _quota.value = rows.firstOrNull()?.data
+            // Bir anahtar bile alınamadıysa hata durumu yüzeye çıksın.
+            _quotaError.value = rows.isEmpty()
             _quotaLoading.value = false
         }
     }
