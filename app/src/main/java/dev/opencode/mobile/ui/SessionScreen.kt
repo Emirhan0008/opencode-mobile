@@ -66,6 +66,7 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
@@ -266,6 +267,7 @@ fun SessionScreen(
                     busy = state.busy,
                     onRevert = onRevert,
                     onQuote = { quote -> input = (input.trimEnd() + "\n\n" + quote).trimStart('\n') },
+                    onAnswer = { answer -> input = answer },
                 )
             }
 
@@ -521,6 +523,7 @@ private fun MessageCard(
     busy: Boolean,
     onQuote: (String) -> Unit,
     onRevert: (String) -> Unit,
+    onAnswer: (String) -> Unit = {},
 ) {
     val id = msg.str("id")
     if (id != null && id == liveID) return // canlı kart bunun yerine gösteriliyor
@@ -565,7 +568,11 @@ private fun MessageCard(
                             when (part.str("type")) {
                                 "text" -> RichText(part.str("text").orEmpty())
                                 "reasoning" -> ReasoningBlock(part.str("text").orEmpty())
-                                "tool" -> ToolBlock(part)
+                                "tool" -> if (part.str("name") == "question") {
+                                    QuestionBlock(part, onAnswer = onAnswer)
+                                } else {
+                                    ToolBlock(part)
+                                }
                             }
                         }
                         // model/sağlayıcı hatası: içerik boş kalmışsa da hata görünür olsun
@@ -1069,6 +1076,164 @@ private fun LiveToolBlock(tool: ToolRow) {
     }
 }
 
+// ------------------------------------------------------------- question tool
+
+/**
+ * `question` aracının kartı. Araç girdisindeki soruları ve seçenekleri okunur
+ * biçimde gösterir; seçenekler **tıklanabilir**.
+ *
+ * - Araç hâlâ çalışıyorsa (bekleyen soru) seçim `onAnswer` ile gönderilir.
+ * - Geçmiş kayıtsa tıklama, seçimi yanıt kutusuna yazar (yeniden gönderilebilir).
+ */
+@Composable
+private fun QuestionBlock(
+    part: JsonObject,
+    onAnswer: (String) -> Unit = {},
+) {
+    val state = part.obj("state")
+    val input = state.obj("input")
+    val questions = input.arr("questions").map { it.obj() }
+    val answers: List<List<String>> =
+        state.obj("metadata").arr("answers").map { row ->
+            val items = (row as? JsonArray)?.toList() ?: emptyList()
+            items.mapNotNull { (it as? JsonPrimitive)?.content }
+        }
+    val answered = answers.any { it.isNotEmpty() } ||
+        state.str("status") == "completed"
+    if (questions.isEmpty()) {
+        ToolBlock(part)
+        return
+    }
+    // Yerel seçim: tıklama hem görsel geri bildirim verir hem yanıt kutusunu doldurur.
+    val picked = remember(part.str("id")) {
+        mutableStateMapOf<Int, String>()
+    }
+    val shape = RoundedCornerShape(14.dp)
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clip(shape)
+            .background(Oc.purple.copy(alpha = 0.10f))
+            .border(1.dp, Oc.purple.copy(alpha = 0.45f), shape)
+            .padding(12.dp),
+    ) {
+        // sol renk şeridi
+        Box(
+            Modifier
+                .width(3.dp)
+                .heightIn(min = 40.dp)
+                .clip(RoundedCornerShape(2.dp))
+                .background(Oc.purple),
+        )
+        Spacer(Modifier.width(10.dp))
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("❓", style = MaterialTheme.typography.titleSmall)
+                Spacer(Modifier.width(6.dp))
+                Text(
+                    "SORU",
+                    color = Oc.purple,
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.Bold,
+                )
+                Spacer(Modifier.weight(1f))
+                StatusPill(
+                    text = when {
+                        picked.isNotEmpty() -> "seçildi"
+                        answered -> "yanıtlandı"
+                        else -> "bekliyor"
+                    },
+                    color = when {
+                        picked.isNotEmpty() -> Oc.accent
+                        answered -> Oc.accent
+                        else -> Oc.warn
+                    },
+                )
+            }
+            questions.forEachIndexed { qi, q ->
+                val recorded = answers.getOrNull(qi).orEmpty().toSet()
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    q.str("header")?.takeIf { it.isNotBlank() }?.let {
+                        Text(
+                            it.uppercase(),
+                            color = Oc.dim,
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                        )
+                    }
+                    Text(
+                        q.str("question") ?: q.str("header").orEmpty(),
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.Medium,
+                    )
+                    q.arr("options").map { it.obj() }.forEach { opt ->
+                        val label = opt.str("label") ?: opt.str("value").orEmpty()
+                        val local = picked[qi] == label
+                        val selected = local || label in recorded
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(
+                                    if (selected) Oc.accent.copy(alpha = 0.14f)
+                                    else Oc.panelAlt,
+                                )
+                                .border(
+                                    1.dp,
+                                    if (selected) Oc.accent.copy(alpha = 0.7f) else Oc.border,
+                                    RoundedCornerShape(10.dp),
+                                )
+                                .clickable {
+                                    picked[qi] = label
+                                    onAnswer(label)
+                                }
+                                .padding(horizontal = 10.dp, vertical = 9.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                if (selected) "✓" else "○",
+                                color = if (selected) Oc.accent else Oc.dim,
+                                style = MaterialTheme.typography.labelLarge,
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text(
+                                    label,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = if (selected) Oc.text else Oc.text.copy(alpha = 0.85f),
+                                    fontWeight = if (selected) FontWeight.Medium else FontWeight.Normal,
+                                )
+                                opt.str("description")?.takeIf { it.isNotBlank() }?.let {
+                                    Text(
+                                        it,
+                                        color = Oc.dim,
+                                        style = MaterialTheme.typography.labelSmall,
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/** Küçük renkli durum etiketi (pill). */
+@Composable
+private fun StatusPill(text: String, color: androidx.compose.ui.graphics.Color) {
+    Text(
+        text,
+        color = color,
+        style = MaterialTheme.typography.labelSmall,
+        fontWeight = FontWeight.Bold,
+        modifier = Modifier
+            .clip(RoundedCornerShape(50))
+            .background(color.copy(alpha = 0.15f))
+            .padding(horizontal = 8.dp, vertical = 3.dp),
+    )
+}
+
 // ------------------------------------------------------------------- form
 
 /**
@@ -1085,18 +1250,34 @@ private fun FormCard(
     val formID = form.str("id").orEmpty()
     val fields = form.arr("fields").map { it.obj() }.filter { it.str("hidden") != "true" }
     val answers = remember(formID) { mutableStateMapOf<String, JsonElement>() }
+    val shape = RoundedCornerShape(14.dp)
 
     Column(
         Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(4.dp))
-            .background(Oc.panel)
-            .border(1.dp, Oc.purple, RoundedCornerShape(4.dp))
-            .padding(10.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
+            .clip(shape)
+            .background(Oc.purple.copy(alpha = 0.10f))
+            .border(1.dp, Oc.purple.copy(alpha = 0.45f), shape)
+            .padding(12.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        Text("❓ SORU", color = Oc.purple, style = MaterialTheme.typography.labelLarge)
-        Text(form.str("title") ?: "Seçim bekleniyor", style = MaterialTheme.typography.bodyLarge)
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("❓", style = MaterialTheme.typography.titleSmall)
+            Spacer(Modifier.width(6.dp))
+            Text(
+                "SORU",
+                color = Oc.purple,
+                style = MaterialTheme.typography.labelSmall,
+                fontWeight = FontWeight.Bold,
+            )
+            Spacer(Modifier.weight(1f))
+            StatusPill("yanıt bekliyor", Oc.warn)
+        }
+        Text(
+            form.str("title") ?: "Seçim bekleniyor",
+            style = MaterialTheme.typography.bodyMedium,
+            fontWeight = FontWeight.Medium,
+        )
 
         for (field in fields) {
             val key = field.str("key") ?: continue
@@ -1215,13 +1396,14 @@ private fun ChoiceChip(label: String, selected: Boolean, onClick: () -> Unit) {
     Text(
         label,
         color = if (selected) Oc.bg else Oc.text,
-        style = MaterialTheme.typography.labelLarge,
+        style = MaterialTheme.typography.labelMedium,
+        fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
         modifier = Modifier
-            .clip(RoundedCornerShape(3.dp))
+            .clip(RoundedCornerShape(50))
             .background(if (selected) Oc.accent else Oc.panelAlt)
-            .border(1.dp, if (selected) Oc.accent else Oc.border, RoundedCornerShape(3.dp))
+            .border(1.dp, if (selected) Oc.accent else Oc.border, RoundedCornerShape(50))
             .clickable(onClick = onClick)
-            .padding(horizontal = 10.dp, vertical = 4.dp),
+            .padding(horizontal = 12.dp, vertical = 7.dp),
     )
 }
 
@@ -1265,7 +1447,7 @@ private fun Panel(
     header: String,
     modifier: Modifier = Modifier,
     background: androidx.compose.ui.graphics.Color = Oc.panel,
-    shape: RoundedCornerShape = RoundedCornerShape(4.dp),
+    shape: RoundedCornerShape = RoundedCornerShape(14.dp),
     content: @Composable () -> Unit,
 ) {
     Column(

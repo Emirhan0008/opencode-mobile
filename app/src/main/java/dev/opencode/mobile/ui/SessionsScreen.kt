@@ -59,6 +59,7 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import dev.opencode.mobile.ConnState
@@ -609,12 +610,13 @@ private fun FilterChipRow(filter: SessionFilter, selected: Boolean, onClick: () 
         filter.label,
         color = if (selected) Oc.bg else Oc.dim,
         style = MaterialTheme.typography.labelMedium,
+        fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
         modifier = Modifier
-            .clip(RoundedCornerShape(3.dp))
+            .clip(RoundedCornerShape(50))
             .background(if (selected) Oc.accent else Oc.panelAlt)
-            .border(1.dp, if (selected) Oc.accent else Oc.border, RoundedCornerShape(3.dp))
+            .border(1.dp, if (selected) Oc.accent else Oc.border, RoundedCornerShape(50))
             .clickable(onClick = onClick)
-            .padding(horizontal = 8.dp, vertical = 3.dp),
+            .padding(horizontal = 12.dp, vertical = 5.dp),
     )
 }
 
@@ -673,39 +675,42 @@ private fun SessionRow(
     var showDelete by remember { mutableStateOf(false) }
     val clipboard = LocalClipboardManager.current
 
-    Box(Modifier.fillMaxWidth().padding(start = (16 * indent).dp)) {
+    Box(Modifier.fillMaxWidth().padding(start = (14 * indent).dp)) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .clip(RoundedCornerShape(4.dp))
+                .clip(RoundedCornerShape(14.dp))
                 .background(Oc.panel)
                 .border(1.dp, when {
-                    busy -> Oc.accent
-                    failed -> Oc.err
+                    busy -> Oc.accent.copy(alpha = 0.6f)
+                    failed -> Oc.err.copy(alpha = 0.6f)
                     else -> Oc.border
-                }, RoundedCornerShape(4.dp))
+                }, RoundedCornerShape(14.dp))
                 .combinedClickable(onClick = onClick, onLongClick = { menu = true })
-                .padding(horizontal = 9.dp, vertical = 6.dp),
+                .padding(start = 0.dp, end = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
+            // sol renk şeridi: çalışan / başarısız / normal
             Box(
                 Modifier
-                    .size(6.dp)
-                    .clip(CircleShape)
+                    .width(3.dp)
+                    .height(46.dp)
                     .background(when {
                         busy -> Oc.accent
                         failed -> Oc.err
-                        else -> Oc.dim
+                        else -> androidx.compose.ui.graphics.Color.Transparent
                     }),
             )
-            Spacer(Modifier.width(8.dp))
-            Column(Modifier.weight(1f)) {
+            Spacer(Modifier.width(9.dp))
+            Column(Modifier.weight(1f).padding(vertical = 9.dp)) {
                 Text(
                     (if (child) "↳ " else "") + title,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                     style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.Medium,
                 )
+                Spacer(Modifier.height(2.dp))
                 Text(
                     "$directory · ${formatTime(updatedAt)} · $${"%.3f".format(cost)}",
                     color = Oc.dim,
@@ -716,21 +721,23 @@ private fun SessionRow(
             }
             if (hasQuestion) {
                 Text("❓", color = Oc.purple, style = MaterialTheme.typography.labelSmall)
-                Spacer(Modifier.width(4.dp))
+                Spacer(Modifier.width(5.dp))
             }
             Text(
                 when {
                     busy -> "çalışıyor"
                     failed -> "başarısız"
                     child -> "alt ajan"
-                    else -> ""
+                    else -> "›"
                 },
                 color = when {
                     busy -> Oc.accent
                     failed -> Oc.err
-                    else -> Oc.purple
+                    child -> Oc.purple
+                    else -> Oc.dim
                 },
                 style = MaterialTheme.typography.labelSmall,
+                fontWeight = if (busy || failed) FontWeight.SemiBold else FontWeight.Normal,
             )
         }
 
