@@ -37,6 +37,7 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -54,6 +55,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.AnnotatedString
@@ -169,16 +171,16 @@ fun SessionsScreen(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                        .padding(horizontal = 10.dp, vertical = 6.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Image(
                         painter = painterResource(R.drawable.ic_logo),
                         contentDescription = "OpenCode Mobile",
-                        modifier = Modifier.size(28.dp),
+                        modifier = Modifier.size(22.dp),
                     )
-                    Spacer(Modifier.width(8.dp))
-                    Text("┌─ SESSIONS", style = MaterialTheme.typography.titleMedium)
+                    Spacer(Modifier.width(6.dp))
+                    Text("SESSIONS", style = MaterialTheme.typography.titleSmall)
                     Spacer(Modifier.weight(1f))
                     if (permissionCount > 0) {
                         Text("🔐 $permissionCount", color = Oc.warn, style = MaterialTheme.typography.labelLarge)
@@ -188,33 +190,39 @@ fun SessionsScreen(
                         Text("❓ $questionCount", color = Oc.purple, style = MaterialTheme.typography.labelLarge)
                         Spacer(Modifier.width(6.dp))
                     }
-                    // Kompakt başlık eylemleri (IconButton 48dp yerine ~34dp) — "çıkış" tek satıra sığsın.
+                    // Kompakt başlık eylemleri (IconButton 48dp yerine ~30dp).
                     BarAction(onClick = onOpenTelegram) {
-                        Text("✈", style = MaterialTheme.typography.labelLarge)
+                        Text("✈", style = MaterialTheme.typography.labelMedium)
                     }
                     BarAction(onClick = onOpenSettings) {
-                        Text("⚙", style = MaterialTheme.typography.labelLarge)
+                        Text("⚙", style = MaterialTheme.typography.labelMedium)
                     }
                     BarAction(onClick = onToggleTheme) {
-                        Text(if (darkTheme) "☀" else "☾", style = MaterialTheme.typography.labelLarge)
+                        Text(if (darkTheme) "☀" else "☾", style = MaterialTheme.typography.labelMedium)
                     }
                     BarAction(onClick = { showShutdown = true }) {
                         Icon(
                             painterResource(R.drawable.ic_power),
                             contentDescription = "kapatma planı",
+                            modifier = Modifier.size(16.dp),
                             tint = if (shutdownArmed) Oc.warn else Oc.dim,
                         )
                     }
                     BarAction(onClick = onRefresh) {
-                        Icon(Icons.Default.Refresh, contentDescription = "yenile", tint = Oc.accent)
+                        Icon(
+                            Icons.Default.Refresh,
+                            contentDescription = "yenile",
+                            modifier = Modifier.size(17.dp),
+                            tint = Oc.accent,
+                        )
                     }
                     Box(
                         modifier = Modifier
-                            .padding(start = 6.dp)
+                            .padding(start = 4.dp)
                             .clip(RoundedCornerShape(4.dp))
                             .border(1.dp, Oc.border, RoundedCornerShape(4.dp))
                             .clickable(onClick = onDisconnect)
-                            .padding(horizontal = 8.dp, vertical = 5.dp),
+                            .padding(horizontal = 7.dp, vertical = 4.dp),
                     ) {
                         Text(
                             "çıkış",
@@ -277,7 +285,7 @@ fun SessionsScreen(
                             .fillMaxWidth()
                             .background(Oc.panelAlt)
                             .clickable(onClick = onRefreshQuota)
-                            .padding(horizontal = 12.dp, vertical = 4.dp),
+                            .padding(horizontal = 10.dp, vertical = 2.dp),
                     ) {
                         if (quotas.isNotEmpty()) {
                             quotas.forEach { row -> QuotaLine(row) }
@@ -369,27 +377,50 @@ fun SessionsScreen(
                     }
                 }
 
-                // ------------------------------------------------------- arama
+                // ------------------------------------------- arama (kompakt)
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 12.dp),
+                        .padding(horizontal = 10.dp)
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(Oc.panelAlt)
+                        .border(1.dp, Oc.border, RoundedCornerShape(6.dp))
+                        .padding(horizontal = 8.dp, vertical = 6.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Icon(Icons.Default.Search, contentDescription = null, tint = Oc.dim)
-                    Spacer(Modifier.width(6.dp))
-                    OutlinedTextField(
-                        value = query,
-                        onValueChange = { query = it },
-                        modifier = Modifier.weight(1f),
-                        singleLine = true,
-                        placeholder = { Text("başlık / dizin ara…", color = Oc.dim) },
-                        colors = ocFieldColors(),
+                    Icon(
+                        Icons.Default.Search,
+                        contentDescription = null,
+                        modifier = Modifier.size(16.dp),
+                        tint = Oc.dim,
                     )
-                    if (query.isNotEmpty()) {
-                        IconButton(onClick = { query = "" }) {
-                            Icon(Icons.Default.Close, contentDescription = "temizle", tint = Oc.dim)
+                    Spacer(Modifier.width(6.dp))
+                    Box(Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
+                        if (query.isEmpty()) {
+                            Text(
+                                "başlık / dizin ara…",
+                                color = Oc.dim,
+                                style = MaterialTheme.typography.bodySmall,
+                            )
                         }
+                        BasicTextField(
+                            value = query,
+                            onValueChange = { query = it },
+                            singleLine = true,
+                            textStyle = MaterialTheme.typography.bodySmall.copy(color = Oc.text),
+                            cursorBrush = SolidColor(Oc.accent),
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
+                    if (query.isNotEmpty()) {
+                        Text(
+                            "✕",
+                            color = Oc.dim,
+                            style = MaterialTheme.typography.labelSmall,
+                            modifier = Modifier
+                                .clickable { query = "" }
+                                .padding(start = 6.dp),
+                        )
                     }
                 }
 
@@ -397,8 +428,8 @@ fun SessionsScreen(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 12.dp, vertical = 8.dp),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        .padding(horizontal = 10.dp, vertical = 6.dp),
+                    horizontalArrangement = Arrangement.spacedBy(5.dp),
                 ) {
                     SessionFilter.entries.forEach { f ->
                         FilterChipRow(f, selected = filter == f) { filter = f }
@@ -411,7 +442,10 @@ fun SessionsScreen(
                 onClick = { showNew = true },
                 containerColor = Oc.accent,
                 contentColor = Oc.bg,
-            ) { Icon(Icons.Default.Add, contentDescription = "yeni session") }
+                modifier = Modifier.size(48.dp),
+            ) {
+                Icon(Icons.Default.Add, contentDescription = "yeni session", modifier = Modifier.size(20.dp))
+            }
         },
     ) { padding ->
         Box(Modifier.padding(padding).fillMaxSize()) {
@@ -491,9 +525,9 @@ fun SessionsScreen(
                 else -> LazyColumn(
                     modifier = Modifier.fillMaxSize(),
                     contentPadding = androidx.compose.foundation.layout.PaddingValues(
-                        start = 8.dp, end = 8.dp, top = 8.dp, bottom = 88.dp,
+                        start = 6.dp, end = 6.dp, top = 4.dp, bottom = 80.dp,
                     ),
-                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
                 ) {
                     items(rows, key = { row -> when (row) {
                         is SessionListRow.Item -> row.obj.str("id").orEmpty()
@@ -574,24 +608,24 @@ private fun FilterChipRow(filter: SessionFilter, selected: Boolean, onClick: () 
     Text(
         filter.label,
         color = if (selected) Oc.bg else Oc.dim,
-        style = MaterialTheme.typography.labelLarge,
+        style = MaterialTheme.typography.labelMedium,
         modifier = Modifier
             .clip(RoundedCornerShape(3.dp))
             .background(if (selected) Oc.accent else Oc.panelAlt)
             .border(1.dp, if (selected) Oc.accent else Oc.border, RoundedCornerShape(3.dp))
             .clickable(onClick = onClick)
-            .padding(horizontal = 10.dp, vertical = 4.dp),
+            .padding(horizontal = 8.dp, vertical = 3.dp),
     )
 }
 
-/** Üst bar için kompakt eylem düğmesi (IconButton 48dp yerine ~34dp). */
+/** Üst bar için kompakt eylem düğmesi (IconButton 48dp yerine ~28dp). */
 @Composable
 private fun BarAction(onClick: () -> Unit, content: @Composable () -> Unit) {
     Box(
         modifier = Modifier
             .clip(RoundedCornerShape(4.dp))
             .clickable(onClick = onClick)
-            .padding(horizontal = 6.dp, vertical = 6.dp),
+            .padding(horizontal = 5.dp, vertical = 4.dp),
         contentAlignment = Alignment.Center,
     ) { content() }
 }
@@ -605,7 +639,7 @@ private fun ExpanderRow(count: Int, expanded: Boolean, depth: Int, onToggle: () 
             .clip(RoundedCornerShape(4.dp))
             .background(Oc.panelAlt)
             .clickable(onClick = onToggle)
-            .padding(horizontal = 10.dp, vertical = 6.dp),
+            .padding(horizontal = 10.dp, vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
@@ -651,12 +685,12 @@ private fun SessionRow(
                     else -> Oc.border
                 }, RoundedCornerShape(4.dp))
                 .combinedClickable(onClick = onClick, onLongClick = { menu = true })
-                .padding(10.dp),
+                .padding(horizontal = 9.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Box(
                 Modifier
-                    .size(8.dp)
+                    .size(6.dp)
                     .clip(CircleShape)
                     .background(when {
                         busy -> Oc.accent
@@ -664,24 +698,25 @@ private fun SessionRow(
                         else -> Oc.dim
                     }),
             )
-            Spacer(Modifier.width(10.dp))
+            Spacer(Modifier.width(8.dp))
             Column(Modifier.weight(1f)) {
                 Text(
                     (if (child) "↳ " else "") + title,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
-                    style = MaterialTheme.typography.bodyLarge,
+                    style = MaterialTheme.typography.bodyMedium,
                 )
                 Text(
-                    "$directory  ·  ${formatTime(updatedAt)}  ·  $${"%.3f".format(cost)}",
-                    style = MaterialTheme.typography.bodySmall,
+                    "$directory · ${formatTime(updatedAt)} · $${"%.3f".format(cost)}",
+                    color = Oc.dim,
+                    style = MaterialTheme.typography.labelSmall,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
             }
             if (hasQuestion) {
-                Text("❓", color = Oc.purple, style = MaterialTheme.typography.labelLarge)
-                Spacer(Modifier.width(6.dp))
+                Text("❓", color = Oc.purple, style = MaterialTheme.typography.labelSmall)
+                Spacer(Modifier.width(4.dp))
             }
             Text(
                 when {
