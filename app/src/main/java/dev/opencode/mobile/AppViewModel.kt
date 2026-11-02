@@ -1702,6 +1702,9 @@ $startCmd
     fun refreshQuota() {
         val current = api
         val creds = _models.value
+            // `evren` sağlayıcısı önce gelsin: kurulumda EVREN_API_KEY, diğer
+            // (aynı sunucuya bakan) kayıtlardan önce H1 olarak etiketlensin.
+            .sortedBy { if (it.str("providerID") == "evren") 0 else 1 }
             .map { it.obj("settings") }
             .mapNotNull { cfg ->
                 val base = cfg.str("baseURL")?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
