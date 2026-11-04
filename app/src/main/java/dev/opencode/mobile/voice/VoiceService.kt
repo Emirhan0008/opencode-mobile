@@ -114,6 +114,22 @@ class VoiceService : Service() {
                 VoiceLog.write("BİTTİ", "kullanıcı dinlemeyi bitirdi")
                 runCatching { flow.finishListening() }
             }
+            // Tek "Dinle / Bitti" niyeti. MIUI bildirim paneli düğme etiketini
+            // her güncellemede tazelemiyor: panelde "Bitti" yazarken arkasında
+            // eski "Dinle" niyeti kalabiliyordu ve basınca yeni bir dinleme
+            // başlıyordu. Bu niyet **o anki aşamaya** bakar; etiket ne olursa
+            // olsun doğru işi yapar.
+            ACTION_TOGGLE -> {
+                if (flow.stage == VoiceFlow.Stage.LISTENING) {
+                    VoiceLog.write("BİTTİ", "kullanıcı dinlemeyi bitirdi (düğme)")
+                    runCatching { flow.finishListening() }
+                } else {
+                    scope.launch {
+                        preempt()
+                        withBusy { flow.onButton() }
+                    }
+                }
+            }
             ACTION_BUTTON -> {
                 val long = intent.getBooleanExtra(EXTRA_LONG, false)
                 scope.launch { gesture(long) }
@@ -462,10 +478,12 @@ class VoiceService : Service() {
             Intent(this, VoiceService::class.java).apply { action = ACTION_STOP },
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
-        val listen = PendingIntent.getService(
+        // Tek niyet: etiket "Dinle" de olsa "Bitti ✓" de olsa servis o anki
+        // aşamaya bakar. MIUI'nin bayat etiketi artık yanlış işe yol açmaz.
+        val toggle = PendingIntent.getService(
             this,
             2,
-            Intent(this, VoiceService::class.java).apply { action = ACTION_LISTEN },
+            Intent(this, VoiceService::class.java).apply { action = ACTION_TOGGLE },
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
         val summary = PendingIntent.getService(
@@ -478,12 +496,6 @@ class VoiceService : Service() {
             this,
             5,
             Intent(this, VoiceService::class.java).apply { action = ACTION_DISABLE },
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
-        )
-        val finish = PendingIntent.getService(
-            this,
-            6,
-            Intent(this, VoiceService::class.java).apply { action = ACTION_FINISH },
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
         val stepText = if (ui.step == 0) "hazır" else "adım ${ui.step}/5"
@@ -506,9 +518,9 @@ class VoiceService : Service() {
         // Dinlerken ilk düğme "Bitti ✓": kalabalıkta çevre sesi yüzünden dinleme
         // kapanmasa da kullanıcı konuşmasının bittiğini kendisi bildirir.
         if (stage == VoiceFlow.Stage.LISTENING) {
-            builder.addAction(0, "Bitti ✓", finish)
+            builder.addAction(0, "Bitti ✓", toggle)
         } else {
-            builder.addAction(0, "Dinle", listen)
+            builder.addAction(0, "Dinle", toggle)
         }
         // MIUI yalnızca ilk 3 düğmeyi gösterir; bu yüzden Özet en sonda
         // (stok Android'de 4'ü de görünür). Uzun basış da özet okur.
@@ -553,6 +565,7 @@ class VoiceService : Service() {
         private const val FOREGROUND_ID = 1002
         private const val ACTION_STOP = "dev.opencode.mobile.voice.STOP"
         private const val ACTION_FINISH = "dev.opencode.mobile.voice.FINISH"
+        private const val ACTION_TOGGLE = "dev.opencode.mobile.voice.TOGGLE"
         private const val ACTION_DISABLE = "dev.opencode.mobile.voice.DISABLE"
         private const val ACTION_BUTTON = "dev.opencode.mobile.voice.BUTTON"
         private const val EXTRA_LONG = "dev.opencode.mobile.voice.LONG"

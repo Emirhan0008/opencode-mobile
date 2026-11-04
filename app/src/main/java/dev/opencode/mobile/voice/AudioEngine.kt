@@ -38,7 +38,12 @@ class AudioEngine(private val context: Context) {
      */
     @Volatile private var finishRequested = false
 
-    /** Konuşma bitti: kaydı hemen bitir (bir sonraki [record] sıfırlar). */
+    /** Yeni dinleme turu başlarken önceki turdan kalan isteği temizler. */
+    fun resetFinish() {
+        finishRequested = false
+    }
+
+    /** Konuşma bitti: kaydı hemen bitir. */
     fun finishNow() {
         finishRequested = true
     }
@@ -115,7 +120,6 @@ class AudioEngine(private val context: Context) {
         silenceMs: Int = 1_200,
         noSpeechMs: Int = 6_000,
     ): ByteArray? = withContext(Dispatchers.IO) {
-        finishRequested = false
         val sampleRate = 16_000
         val minBuf = AudioRecord.getMinBufferSize(
             sampleRate,
@@ -182,14 +186,16 @@ class AudioEngine(private val context: Context) {
                     lastVoiceAt = now
                 }
 
-                if (speechStarted) {
-                    for (i in 0 until n) {
-                        val s = chunk[i].toInt()
-                        pcm.write(s and 0xFF)
-                        pcm.write((s shr 8) and 0xFF)
-                    }
+                // PCM'i **her zaman** biriktir. Önceden yalnızca "konuşma
+                // algılandı" işaretinden sonra yazılıyordu; kullanıcı "Bitti"
+                // düğmesine gürültü eşiği aşılmadan bastığında tampon boş
+                // kalıyor, kayıt null dönüyor ve akış bir sonraki aşamaya
+                // geçmek yerine baştan dinlemeye düşüyordu.
+                for (i in 0 until n) {
+                    val s = chunk[i].toInt()
+                    pcm.write(s and 0xFF)
+                    pcm.write((s shr 8) and 0xFF)
                 }
-
                 val silenceFor = if (speechStarted) now - lastVoiceAt else 0
                 // "Bitti ✓" düğmesi: kullanıcı konuşmasını bitirdiğini bildirdi.
                 if (finishRequested) break
@@ -204,9 +210,15 @@ class AudioEngine(private val context: Context) {
             runCatching { record.release() }
         }
 
-        if (!speechStarted) return@withContext null
+        val explicitFinish = finishRequested
+        finishRequested = false
+
+        // Konuşma hiç algılanmadıysa otomatik zaman aşımında boş kayıt say.
+        // Ama kullanıcı "Bitti"ye bastıysa elindeki sesi yine de gönder —
+        // gürültü eşiği tutmasa bile söylediği cümle kaybolmasın.
+        if (!speechStarted && !explicitFinish) return@withContext null
         val raw = pcm.toByteArray()
-        if (raw.size < sampleRate / 2) return@withContext null // <0.25 sn
+        if (raw.size < sampleRate / 4) return@withContext null // <~0.25 sn
         wav(raw, sampleRate)
     }
 

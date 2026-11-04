@@ -181,6 +181,7 @@ class VoiceFlow(
         stage = Stage.LISTENING
         onState(if (attempt == 1) "dinliyorum…" else "tekrar dinliyorum…")
         VoiceLog.write("DİNLE", if (attempt == 1) "başladı" else "tekrar (deneme $attempt)")
+        audio.resetFinish()
         audio.beep(start = true)
         audio.openInputRoute()
         val wav = try {
@@ -272,6 +273,7 @@ class VoiceFlow(
     private suspend fun awaitConfirm(ev: EvrenClient, attempt: Int) {
         afterSpeechPause()
         stage = Stage.LISTENING
+        audio.resetFinish()
         audio.beep(start = true)
         audio.openInputRoute()
         val wav = try {
@@ -755,6 +757,7 @@ class VoiceFlow(
 
         if (attempt > 1) say("Bir ile beş arasında bir numara söyle.", ev)
         stage = Stage.LISTENING
+        audio.resetFinish()
         audio.beep(start = true)
         audio.openInputRoute()
         val wav = try {
@@ -1322,6 +1325,7 @@ class VoiceFlow(
         followUps++
         afterSpeechPause()
         stage = Stage.LISTENING
+        audio.resetFinish()
         audio.beep(start = true)
         audio.openInputRoute()
         val wav = try {
