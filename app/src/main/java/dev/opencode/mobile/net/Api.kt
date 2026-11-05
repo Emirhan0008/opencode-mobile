@@ -25,6 +25,59 @@ import java.util.concurrent.TimeUnit
 
 class ApiException(val status: Int, message: String) : Exception(message)
 
+/** Sesli akışta okunacak `question` aracı sorusu. */
+data class PendingQuestion(
+    val header: String,
+    val question: String,
+    val options: List<QuestionOption>,
+)
+
+/** Soru seçeneği: kullanıcıya okunan etiket + isteğe bağlı açıklama. */
+data class QuestionOption(val label: String, val description: String = "")
+
+/**
+ * `question` aracı parçalarını **yanıt bekleyen** sorulara çevirir.
+ *
+ * Ağdan bağımsız tutuldu: yalnızca mesaj listesiyle çalışır, bu yüzden birim
+ * testinde sahte JSON ile doğrulanabilir.
+ */
+object QuestionParser {
+
+    fun pending(messages: List<JsonObject>): List<PendingQuestion> {
+        // En yeni mesajdan geriye: yanıtlanmamış ilk question aracı kazanır.
+        for (msg in messages) {
+            for (raw in msg.arr("content")) {
+                val part = raw.obj()
+                if (part.str("type") != "tool" || part.str("name") != "question") continue
+                val state = part.obj("state")
+                if (state.str("status") == "completed") continue
+                val answered = state.obj("metadata").arr("answers").any { row ->
+                    (row as? JsonArray)?.isNotEmpty() == true
+                }
+                if (answered) continue
+                val questions = state.obj("input").arr("questions").map { it.obj() }
+                if (questions.isEmpty()) continue
+                val parsed = questions.map { q ->
+                    PendingQuestion(
+                        header = q.str("header").orEmpty(),
+                        question = q.str("question") ?: q.str("header").orEmpty(),
+                        options = q.arr("options").map { o ->
+                            val ob = o.obj()
+                            QuestionOption(
+                                label = ob.str("label") ?: ob.str("value").orEmpty(),
+                                description = ob.str("description").orEmpty(),
+                            )
+                        }.filter { it.label.isNotBlank() },
+                    )
+                }.filter { it.question.isNotBlank() && it.options.isNotEmpty() }
+                if (parsed.isNotEmpty()) return parsed
+            }
+        }
+        return emptyList()
+    }
+}
+
+
 /** Bir SSE olayı: `type` + içindeki `data` nesnesi. */
 data class OcEvent(val type: String, val data: JsonObject)
 
@@ -125,6 +178,17 @@ class Api(baseUrl: String, private val token: String) {
 
     suspend fun prompt(id: String, text: String): JsonElement =
         post("/api/session/$id/prompt", buildJsonObject { put("text", text) })
+
+    /**
+     * Oturumda **yanıt bekleyen** `question` aracı soruları.
+     *
+     * `question` aracı girdisinde sorular (`state.input.questions`), yanıtlar ise
+     * `state.metadata.answers` altında durur. Tamamlanmış ya da yanıtlanmış
+     * araçlar atlanır; en yeni bekleyen araç döndürülür. Sesli akış bu listeyi
+     * okuyup seçeneği numarayla/adıyla alır ve seçimi prompt olarak gönderir.
+     */
+    suspend fun pendingQuestions(id: String): List<PendingQuestion> =
+        QuestionParser.pending(messagesRecent(id, 24))
 
     /**
      * Asistanın **kullanıcıya yazdığı** son yanıt metni. Sesli özetin girdisi budur:

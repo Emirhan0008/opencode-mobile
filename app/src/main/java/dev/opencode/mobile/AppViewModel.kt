@@ -1801,6 +1801,26 @@ $startCmd
         }
     }
 
+    /**
+     * Sesli akıştan gelen isteği çevrimdışı kuyruğa ekler. `AppViewModel`
+     * yaşıyorsa servis doğrudan buraya yazar; böylece kuyruk bellekteki
+     * listeyle tek kaynaktan yönetilir.
+     *
+     * @return eylem kuyruğa eklendiyse `true`.
+     */
+    fun queueVoicePrompt(sessionID: String, text: String): Boolean {
+        val body = text.trim()
+        if (body.isBlank()) return false
+        enqueue(
+            kind = "prompt",
+            sessionID = sessionID,
+            label = "sesli istek → ${sessionID.take(8)}",
+            payload = buildJsonObject { put("text", body) }.toString(),
+            error = "çevrimdışı",
+        )
+        return true
+    }
+
     /** Soru formunu yanıtla. answer: alan adı → değer. */
     fun replyForm(formID: String, answer: JsonObject) {
         val id = currentSessionId() ?: return

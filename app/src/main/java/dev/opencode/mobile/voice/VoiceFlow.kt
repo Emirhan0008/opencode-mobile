@@ -5,6 +5,8 @@ import android.util.Log
 import dev.opencode.mobile.AppControl
 import dev.opencode.mobile.data.Settings
 import dev.opencode.mobile.net.Api
+import dev.opencode.mobile.net.PendingQuestion
+import dev.opencode.mobile.net.QuestionOption
 import dev.opencode.mobile.net.num
 import dev.opencode.mobile.net.obj
 import dev.opencode.mobile.net.str
@@ -874,9 +876,20 @@ class VoiceFlow(
         val sent = runCatching { api.prompt(sessionId, text) }.isSuccess
         pendingText = null
         if (!sent) {
+            // Ağ koptuysa istek kaybolmasın: uygulama açıksa ViewModel kuyruğuna,
+            // yalnızca servis yaşıyorsa doğrudan DataStore kuyruğuna yaz.
+            val vm = AppControl.viewModel()
+            val queued = vm?.queueVoicePrompt(sessionId, text)
+                ?: OfflineQueue.appendPrompt(settings, sessionId, title, text)
             stage = Stage.IDLE
-            onState("gönderilemedi")
-            say("Gönderemedim. Bağlantıyı kontrol et.", client)
+            if (queued) {
+                VoiceLog.write("KUYRUK", "oturum=\"$title\" metin=\"${text.take(200)}\"")
+                onState("kuyruğa alındı → $title")
+                say("Bağlantı yok. İsteği kuyruğa aldım; bağlantı gelince göndereceğim.", client)
+            } else {
+                onState("gönderilemedi")
+                say("Gönderemedim. Bağlantıyı kontrol et.", client)
+            }
             return
         }
         onState("gönderildi → $title")
@@ -892,6 +905,7 @@ class VoiceFlow(
         if (!settings.voiceAutoSummary.first()) {
             stage = Stage.IDLE
             onState("tur bitti")
+            if (ev != null && answerPendingQuestions(api, ev, sessionId)) return
             return
         }
         followUps = 0
@@ -1021,6 +1035,126 @@ class VoiceFlow(
         // Okuma bitti: mikrofonu yeniden aç ve takip komutu bekle. Kullanıcı
         // "tekrar oku", "daha detaylı", "yeni komut" ya da "tamam" diyebilir.
         followUp(api, client, sessionId)
+    }
+
+    /**
+     * Bekleyen `question` aracı sorularını **sesle** yanıtlar.
+     *
+     * Ekranda kart olarak görünen soru, eller serbest kullanımda da çalışsın diye
+     * her soru için seçenekler numaralı okunur ("bir …, iki …"), mikrofon açılır
+     * ve kullanıcı numarayı ya da seçeneğin adını söyleyerek yanıtlar. Birden
+     * çok soru varsa sırayla sorulur; yanıtlar "etiket, etiket" olarak tek bir
+     * prompt hâlinde gönderilir (kartın yaptığı işin aynısı).
+     *
+     * @return bekleyen soru yoksa `false` (çağıran kendi mesajını verir).
+     */
+    private suspend fun answerPendingQuestions(api: Api, ev: EvrenClient, sessionId: String): Boolean {
+        val questions = runCatching { api.pendingQuestions(sessionId) }.getOrDefault(emptyList())
+        if (questions.isEmpty()) return false
+
+        val picked = mutableListOf<String>()
+        for ((qi, q) in questions.withIndex()) {
+            val chosen = askOneQuestion(ev, q, qi + 1, questions.size) ?: return true
+            picked.add(chosen)
+        }
+        if (picked.isEmpty()) return true
+
+        val text = picked.joinToString(", ")
+        VoiceLog.write("SORU", "seçilen=\"$text\"")
+        val title = runCatching { api.session(sessionId).str("title") }.getOrNull() ?: "oturum"
+        pendingText = text
+        onState("soru yanıtı: $text")
+        send(api, ev, sessionId, title)
+        return true
+    }
+
+    /** Tek soruyu okur ve seçimi dinler; vazgeçilirse null. */
+    private suspend fun askOneQuestion(
+        ev: EvrenClient,
+        q: PendingQuestion,
+        index: Int,
+        total: Int,
+    ): String? {
+        val options = q.options
+        val intro = buildString {
+            if (total > 1) append("$index. soru. ")
+            if (q.header.isNotBlank() && !q.question.startsWith(q.header, ignoreCase = true)) {
+                append(q.header).append(". ")
+            }
+            append(q.question).append(" Seçenekler: ")
+            append(
+                options.mapIndexed { i, o -> "${ordinalWord(i + 1)} ${o.label}" }
+                    .joinToString(", "),
+            )
+            append(". Numarasını ya da adını söyle.")
+        }
+        stage = Stage.CONFIRMING
+        say(intro, ev)
+
+        repeat(2) { attempt ->
+            val answer = listenOnce(ev, maxMs = 9_000)
+            if (answer.isBlank()) return@repeat
+            if (parseCancel(answer)) {
+                say("Vazgeçtim.", ev)
+                return null
+            }
+            val idx = matchOptionIndex(answer, options)
+            if (idx != null) {
+                val label = options[idx - 1].label
+                say("Seçtim: $label", ev)
+                return label
+            }
+            if (attempt == 0) say("Anlayamadım. Numarasını söyle.", ev)
+        }
+        say("Soru yanıtsız kaldı.", ev)
+        return null
+    }
+
+    /** Tek dinleme turu: kayıt → STT. Boş dönerse sessizlik. */
+    private suspend fun listenOnce(ev: EvrenClient, maxMs: Int = 9_000): String {
+        afterSpeechPause()
+        stage = Stage.LISTENING
+        audio.resetFinish()
+        audio.beep(start = true)
+        audio.openInputRoute()
+        val wav = try {
+            audio.record(maxMs = maxMs, silenceMs = 900, noSpeechMs = 6_000)
+        } finally {
+            audio.closeInputRoute()
+        }
+        audio.beep(start = false)
+        if (wav == null) return ""
+        val text = runCatching { ev.transcribe(wav) }.getOrDefault("")
+        if (text.isNotBlank()) VoiceLog.text("CEVAP", text)
+        return text
+    }
+
+    /** "iki" / "ikinci" / seçenek adı eşleşmesi → 1 tabanlı sıra. */
+    private fun matchOptionIndex(text: String, options: List<QuestionOption>): Int? {
+        parseOrdinal(text)?.let { n -> if (n in 1..options.size) return n }
+        val spoken = normalize(text).split(" ").filter { it.length >= 3 }
+        if (spoken.isEmpty()) return null
+        val scores = options.map { o ->
+            val words = normalize("${o.label} ${o.description}")
+                .split(" ").filter { it.length >= 3 }
+            if (words.isEmpty()) 0
+            else spoken.count { w -> words.any { it.startsWith(w) || w.startsWith(it) } }
+        }
+        val best = scores.maxOrNull() ?: 0
+        if (best < 1) return null
+        if (scores.count { it == best } != 1) return null
+        return scores.indexOf(best) + 1
+    }
+
+    private fun ordinalWord(n: Int): String = when (n) {
+        1 -> "bir"
+        2 -> "iki"
+        3 -> "üç"
+        4 -> "dört"
+        5 -> "beş"
+        6 -> "altı"
+        7 -> "yedi"
+        else -> "sekiz"
     }
 
     /**
@@ -1243,6 +1377,18 @@ class VoiceFlow(
                 listenAgain(api, ev)
             }
 
+            AppAction.ANSWER_QUESTION -> {
+                val a = api ?: return noConnection(ev)
+                val sid = commandSessionId(a)
+                if (sid == null) {
+                    say("Soru soracak bir oturum bulamadım.", ev)
+                    listenAgain(api, ev)
+                } else if (!answerPendingQuestions(a, ev, sid)) {
+                    say("Bekleyen bir soru yok.", ev)
+                    listenAgain(api, ev)
+                }
+            }
+
             AppAction.READ_LAST -> {
                 val a = api ?: return noConnection(ev)
                 val sid = commandSessionId(a)
@@ -1334,6 +1480,9 @@ class VoiceFlow(
             return
         }
         followUps++
+        // Model bir `question` kartı bıraktıysa özetten sonra takip komutu yerine
+        // doğrudan soruyu oku: eller serbest akışta kartı görmek mümkün değil.
+        if (answerPendingQuestions(api, ev, sessionId)) return
         afterSpeechPause()
         stage = Stage.LISTENING
         audio.resetFinish()

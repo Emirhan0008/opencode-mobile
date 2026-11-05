@@ -109,5 +109,15 @@ class AppCommandParserTest {
         assertEquals(AppAction.HELP, parse("neler yapabilirsin")?.action)
     }
 
+    @Test
+    fun answerPendingQuestion() {
+        assertEquals(AppAction.ANSWER_QUESTION, parse("soruları oku")?.action)
+        assertEquals(AppAction.ANSWER_QUESTION, parse("soruyu yanıtla")?.action)
+        assertEquals(AppAction.ANSWER_QUESTION, parse("bekleyen soru var mı")?.action)
+        assertEquals(AppAction.ANSWER_QUESTION, parse("soruları cevaplar mısın")?.action)
+        // "soru sormak" bir istek olabilir; yalnızca net kalıplar komuttur.
+        assertNull(parse("bana bir soru sor"))
+    }
+
     private fun parse(text: String) = AppCommandParser.parse(text)
 }

@@ -37,6 +37,7 @@ enum class AppAction {
     SEND,
     INTERRUPT,
     READ_LAST,
+    ANSWER_QUESTION,
 }
 
 data class AppCommand(
@@ -324,6 +325,19 @@ object AppCommandParser {
         }
 
         // -------------------------------------------------------- eylemler
+        if (has(
+                "soruyu oku", "soruları oku", "sorulari oku", "soruyu yanıtla",
+                "soruyu yanitla", "soruları yanıtla", "sorulari yanitla",
+                "soruları cevapla", "sorulari cevapla", "soruya cevap ver",
+                "soruları cevaplar mısın", "sorulari cevaplar misin",
+                "soruyu cevaplar mısın", "soruyu cevaplar misin",
+                "soruları dinle", "sorulari dinle", "sorular ne", "soru var mı",
+                "soru var mi", "bekleyen soru", "bekleyen sorular", "sorulari soyle",
+                "soruları söyle",
+            )
+        ) {
+            return AppCommand(AppAction.ANSWER_QUESTION)
+        }
         if (has(
                 "son yanıtı oku", "son yaniti oku", "yanıtı oku", "yaniti oku",
                 "cevabı oku", "cevabi oku", "son cevabı oku", "son cevabi oku",
