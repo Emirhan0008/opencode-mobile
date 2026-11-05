@@ -196,8 +196,8 @@ fun SessionsScreen(
                         Icon(
                             painterResource(R.drawable.ic_telegram),
                             contentDescription = "Telegram",
-                            modifier = Modifier.size(19.dp),
-                            tint = Oc.dim,
+                            modifier = Modifier.size(20.dp),
+                            tint = androidx.compose.ui.graphics.Color.Unspecified,
                         )
                     }
                     BarAction(onClick = onOpenSettings) {
