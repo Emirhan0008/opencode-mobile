@@ -130,6 +130,10 @@ class VoiceFlow(
             delay(150)
             audio.play(bytes)
             audio.cue(AudioEngine.Cue.SPEAK_END)
+            // "Son okunan" kutusu her okumada güncellensin: önceden yalnızca
+            // özet/doğrudan yanıt yollarında yazılıyordu, onay ve soru
+            // cevapları okunduğunda eski metin ekranda kalıyordu.
+            runCatching { settings.setVoiceLastSpoken(text) }
             Log.d(TAG, "okuma bitti: ${text.take(40)}")
         } catch (e: CancellationException) {
             throw e
@@ -353,8 +357,14 @@ class VoiceFlow(
                 cancelCurrent()
                 say("Vazgeçtim.", ev)
             }
-            // Dolu ama "evet/hayır"a benzemeyen cümle: kullanıcı düzeltiyor olabilir.
-            answer.isNotBlank() && attempt < 2 -> {
+            // Dolu ama "evet/hayır"a benzemeyen cümle: kullanıcı düzeltiyor
+            // olabilir. Ancak kısa/ilgisiz bir parça ("biraz daha", "peki")
+            // önceki cümlenin **yerine geçmemeli** — yoksa gönderilecek metin
+            // sessizce değişir. Yalnızca açıkça yeni bir dikte (4+ kelime)
+            // önceki cümlenin yerini alır; kısa belirsiz söylenişte mevcut
+            // cümle korunur ve akış oturum seçimine geçer.
+            answer.isNotBlank() && attempt < 2 &&
+                normalize(answer).split(" ").count { it.isNotBlank() } >= 4 -> {
                 pendingText = answer
                 onState("duyduğum: $answer")
                 stage = Stage.CONFIRMING
@@ -670,7 +680,8 @@ class VoiceFlow(
         val DETAIL_WORDS = listOf(
             "detay", "detaylı", "detayli", "ayrıntı", "ayrinti", "ayrıntılı", "ayrintili",
             "uzun", "uzunca", "açıkla", "acikla", "açıklar mısın", "geniş", "genis",
-            "daha fazla", "hepsini", "tamamını", "tamamen", "madde madde", "özetle anlat",
+            "daha fazla", "biraz daha", "biraz daha oku", "devam et", "devam",
+            "hepsini", "tamamını", "tamamen", "madde madde", "özetle anlat",
         )
         val NEW_WORDS = listOf(
             "yeni komut", "yeni istek", "yeni görev", "yeni gorev", "başka bir şey",

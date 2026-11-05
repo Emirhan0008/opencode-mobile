@@ -181,7 +181,7 @@ fun SessionsScreen(
                         modifier = Modifier.size(22.dp),
                     )
                     Spacer(Modifier.width(6.dp))
-                    Text("SESSIONS", style = MaterialTheme.typography.titleSmall)
+                    Text("OPENCODE", style = MaterialTheme.typography.titleSmall)
                     Spacer(Modifier.weight(1f))
                     if (permissionCount > 0) {
                         Text("🔐 $permissionCount", color = Oc.warn, style = MaterialTheme.typography.labelLarge)
@@ -193,19 +193,24 @@ fun SessionsScreen(
                     }
                     // Kompakt başlık eylemleri (IconButton 48dp yerine ~30dp).
                     BarAction(onClick = onOpenTelegram) {
-                        Text("✈", style = MaterialTheme.typography.labelMedium)
+                        Icon(
+                            painterResource(R.drawable.ic_telegram),
+                            contentDescription = "Telegram",
+                            modifier = Modifier.size(19.dp),
+                            tint = Oc.dim,
+                        )
                     }
                     BarAction(onClick = onOpenSettings) {
-                        Text("⚙", style = MaterialTheme.typography.labelMedium)
+                        Text("⚙", style = MaterialTheme.typography.titleMedium)
                     }
                     BarAction(onClick = onToggleTheme) {
-                        Text(if (darkTheme) "☀" else "☾", style = MaterialTheme.typography.labelMedium)
+                        Text(if (darkTheme) "☀" else "☾", style = MaterialTheme.typography.titleMedium)
                     }
                     BarAction(onClick = { showShutdown = true }) {
                         Icon(
                             painterResource(R.drawable.ic_power),
                             contentDescription = "kapatma planı",
-                            modifier = Modifier.size(16.dp),
+                            modifier = Modifier.size(19.dp),
                             tint = if (shutdownArmed) Oc.warn else Oc.dim,
                         )
                     }
@@ -213,7 +218,7 @@ fun SessionsScreen(
                         Icon(
                             Icons.Default.Refresh,
                             contentDescription = "yenile",
-                            modifier = Modifier.size(17.dp),
+                            modifier = Modifier.size(20.dp),
                             tint = Oc.accent,
                         )
                     }
@@ -620,14 +625,15 @@ private fun FilterChipRow(filter: SessionFilter, selected: Boolean, onClick: () 
     )
 }
 
-/** Üst bar için kompakt eylem düğmesi (IconButton 48dp yerine ~28dp). */
+/** Üst bar eylem düğmesi: rahat basılır boyutta (~34dp dokunma alanı). */
 @Composable
 private fun BarAction(onClick: () -> Unit, content: @Composable () -> Unit) {
     Box(
         modifier = Modifier
-            .clip(RoundedCornerShape(4.dp))
+            .padding(horizontal = 1.dp)
+            .clip(RoundedCornerShape(7.dp))
             .clickable(onClick = onClick)
-            .padding(horizontal = 5.dp, vertical = 4.dp),
+            .padding(horizontal = 9.dp, vertical = 7.dp),
         contentAlignment = Alignment.Center,
     ) { content() }
 }
