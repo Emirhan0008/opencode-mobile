@@ -53,26 +53,38 @@ class AudioEngine(private val context: Context) {
     private var scoDevice: AudioDeviceInfo? = null
 
     /** Kayıt için kulaklık mikrofonunu seçer (varsa). */
-    fun openInputRoute() {
-        runCatching {
+    fun openInputRoute(): Boolean {
+        return runCatching {
             val bt = findBluetoothDevice()
+            if (bt == null) {
+                // Kulaklık o an görünmüyor: eski kod sessizce telefon mikrofonuna
+                // düşüyordu. Kullanıcı kulaklığa konuştuğu için hiçbir şey
+                // duyulmuyordu. Durumu logla — akış bunu bildirimde gösterir.
+                Log.w(TAG, "bluetooth girişi yok — telefon mikrofonu kullanılacak")
+                VoiceLog.write("SES", "bluetooth girişi yok — telefon mikrofonu")
+                return@runCatching false
+            }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
-                if (bt != null) {
-                    audioManager.setCommunicationDevice(bt)
-                    scoDevice = bt
-                }
+                audioManager.setCommunicationDevice(bt)
+                scoDevice = bt
             } else {
                 @Suppress("DEPRECATION")
-                if (bt != null || audioManager.isBluetoothScoAvailableOffCall) {
+                run {
                     audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
-                    @Suppress("DEPRECATION")
                     audioManager.startBluetoothSco()
-                    @Suppress("DEPRECATION")
                     audioManager.isBluetoothScoOn = true
                 }
             }
-        }.onFailure { Log.w(TAG, "giriş yönlendirmesi: ${it.message}") }
+            // Kanalın gerçekten açılmasını bekle; hemen kayda başlamak boş
+            // kayıt üretiyordu.
+            val ready = awaitInputRoute()
+            VoiceLog.write("SES", if (ready) "bluetooth girişi hazır" else "giriş kanalı gecikti")
+            ready
+        }.getOrElse { e ->
+            Log.w(TAG, "giriş yönlendirmesi: ${e.message}")
+            false
+        }
     }
 
     /** Kayıt bitti: iletişim kanalını kapat, normal çıkışa dön. */
@@ -104,6 +116,30 @@ class AudioEngine(private val context: Context) {
         }
     }
 
+    /**
+     * Giriş yolu gerçekten hazır mı?
+     *
+     * `setCommunicationDevice` / `startBluetoothSco` **asenkron** çalışır: çağrı
+     * döndüğünde SCO kanalı henüz açılmamış olabilir. Bu arada `AudioRecord`
+     * başlatılırsa kayıt sessizce boş gelir ("dinliyorum" yazar ama hiçbir şey
+     * duymaz). Burada kısa süre bekleyip gerçek yönlendirmeyi doğruluyoruz.
+     */
+    private fun awaitInputRoute(timeoutMs: Long = 600): Boolean {
+        val deadline = System.currentTimeMillis() + timeoutMs
+        while (System.currentTimeMillis() < deadline) {
+            val ready = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                val active = audioManager.communicationDevice
+                active != null && active.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO
+            } else {
+                @Suppress("DEPRECATION")
+                audioManager.isBluetoothScoOn
+            }
+            if (ready) return true
+            Thread.sleep(50)
+        }
+        return false
+    }
+
     // ------------------------------------------------------------- kayıt
 
     /**
@@ -129,19 +165,34 @@ class AudioEngine(private val context: Context) {
         if (minBuf <= 0) return@withContext null
         val bufSize = maxOf(minBuf * 2, sampleRate) // ~0.5 sn
 
-        val record = runCatching {
-            @Suppress("MissingPermission")
-            AudioRecord(
-                MediaRecorder.AudioSource.VOICE_RECOGNITION,
-                sampleRate,
-                AudioFormat.CHANNEL_IN_MONO,
-                AudioFormat.ENCODING_PCM_16BIT,
-                bufSize,
-            )
-        }.getOrNull() ?: return@withContext null
-
-        if (record.state != AudioRecord.STATE_INITIALIZED) {
-            record.release()
+        // Kayıt cihazı açılamazsa hemen pes etmek yerine kısa aralıklarla
+        // yeniden dene: mikrofon başka bir uygulama/sistem sesi tarafından
+        // henüz bırakılmamış olabilir (tek denemede düşünce akış "dinle"
+        // aşamasını atlıyordu).
+        var record: AudioRecord? = null
+        repeat(3) { attempt ->
+            val r = runCatching {
+                @Suppress("MissingPermission")
+                AudioRecord(
+                    MediaRecorder.AudioSource.VOICE_RECOGNITION,
+                    sampleRate,
+                    AudioFormat.CHANNEL_IN_MONO,
+                    AudioFormat.ENCODING_PCM_16BIT,
+                    bufSize,
+                )
+            }.getOrNull()
+            if (r != null && r.state == AudioRecord.STATE_INITIALIZED) {
+                record = r
+                return@repeat
+            }
+            runCatching { r?.release() }
+            if (attempt < 2) {
+                Log.w(TAG, "AudioRecord açılamadı (deneme ${attempt + 1}/3)")
+                Thread.sleep(250L * (attempt + 1))
+            }
+        }
+        val rec = record ?: run {
+            Log.w(TAG, "AudioRecord hiç açılamadı")
             return@withContext null
         }
 
@@ -150,15 +201,34 @@ class AudioEngine(private val context: Context) {
         var speechStarted = false
         var lastVoiceAt = 0L
         val startedAt = System.currentTimeMillis()
-        // Gürültü tabanı: sessizlikte yavaşça güncellenir.
-        var noiseFloor = 180.0
+        // Gürültü tabanı her turda sıfırlanır. Önceden tek bir yüksek gürültü
+        // (rüzgar, kapı, trafik) tabanı yukarı taşıyıp orada bırakıyordu; sonraki
+        // tüm turlar sağır kalıyordu.
+        var noiseFloor = NOISE_FLOOR_START
+        var readFailures = 0
 
         try {
-            record.startRecording()
+            rec.startRecording()
+            if (rec.recordingState != AudioRecord.RECORDSTATE_RECORDING) {
+                Log.w(TAG, "kayıt başlamadı (recordingState=${rec.recordingState})")
+                return@withContext null
+            }
             while (true) {
                 kotlinx.coroutines.currentCoroutineContext().ensureActive()
-                val n = record.read(chunk, 0, chunk.size)
-                if (n <= 0) continue
+                val n = rec.read(chunk, 0, chunk.size)
+                if (n <= 0) {
+                    // Eskiden `continue` vardı: okuma kalıcı olarak hata dönerse
+                    // döngü sonsuza kadar dönüyor, "dinliyorum" ekranda kalıyor ve
+                    // mikrofon kilitleniyordu. Artık üst üste hata → turu bitir.
+                    readFailures++
+                    if (readFailures >= MAX_READ_FAILURES) {
+                        Log.w(TAG, "okuma sürekli başarısız ($readFailures) — kayıt bitiriliyor")
+                        break
+                    }
+                    Thread.sleep(10)
+                    continue
+                }
+                readFailures = 0
                 val now = System.currentTimeMillis()
                 val elapsed = now - startedAt
 
@@ -170,17 +240,18 @@ class AudioEngine(private val context: Context) {
                     sum += chunk[i].toDouble() * chunk[i]
                 }
                 val rms = sqrt(sum / n)
-                val threshold = maxOf(420.0, noiseFloor * 2.6)
-
+                val threshold = maxOf(MIN_THRESHOLD, noiseFloor * 2.6)
                 if (rms < threshold) {
-                    noiseFloor = noiseFloor * 0.95 + rms * 0.05
+                    noiseFloor = (noiseFloor * 0.95 + rms * 0.05).coerceIn(MIN_NOISE_FLOOR, MAX_NOISE_FLOOR)
+                } else {
+                    // Konuşma/yüksek ses: tabanı yukarı taşıma, yavaşça aşağı çek.
+                    noiseFloor = (noiseFloor * 0.995).coerceIn(MIN_NOISE_FLOOR, MAX_NOISE_FLOOR)
                 }
 
                 val voice = rms > threshold || peak > 2_500
                 if (voice) {
                     if (!speechStarted) {
                         speechStarted = true
-                        // Konuşmanın başını kaçırmamak için tampondaki son ~0.3 sn'yi tut.
                         Log.d(TAG, "konuşma algılandı (rms=${rms.toInt()})")
                     }
                     lastVoiceAt = now
@@ -206,8 +277,8 @@ class AudioEngine(private val context: Context) {
         } catch (e: Exception) {
             Log.w(TAG, "kayıt hatası: ${e.message}")
         } finally {
-            runCatching { record.stop() }
-            runCatching { record.release() }
+            runCatching { rec.stop() }
+            runCatching { rec.release() }
         }
 
         val explicitFinish = finishRequested
@@ -360,5 +431,14 @@ class AudioEngine(private val context: Context) {
         const val TONE_PIP = android.media.ToneGenerator.TONE_CDMA_PIP
         const val TONE_MID = android.media.ToneGenerator.TONE_PROP_BEEP
         const val TONE_DEEP = android.media.ToneGenerator.TONE_PROP_PROMPT
+
+        /** Üst üste bu kadar okuma hatası → kayıt turu bitirilir (sonsuz döngü koruması). */
+        const val MAX_READ_FAILURES = 100
+
+        /** Gürültü tabanı sınırları — tur başına sıfırlanır. */
+        const val NOISE_FLOOR_START = 180.0
+        const val MIN_NOISE_FLOOR = 60.0
+        const val MAX_NOISE_FLOOR = 900.0
+        const val MIN_THRESHOLD = 420.0
     }
 }
