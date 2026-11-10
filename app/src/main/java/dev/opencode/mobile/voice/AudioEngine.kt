@@ -200,6 +200,7 @@ class AudioEngine(private val context: Context) {
         val chunk = ShortArray(bufSize / 2)
         var speechStarted = false
         var lastVoiceAt = 0L
+        var maxPeak = 0
         val startedAt = System.currentTimeMillis()
         // Gürültü tabanı her turda sıfırlanır. Önceden tek bir yüksek gürültü
         // (rüzgar, kapı, trafik) tabanı yukarı taşıyıp orada bırakıyordu; sonraki
@@ -249,6 +250,7 @@ class AudioEngine(private val context: Context) {
                 }
 
                 val voice = rms > threshold || peak > 2_500
+                if (peak > maxPeak) maxPeak = peak
                 if (voice) {
                     if (!speechStarted) {
                         speechStarted = true
@@ -290,7 +292,19 @@ class AudioEngine(private val context: Context) {
         if (!speechStarted && !explicitFinish) return@withContext null
         val raw = pcm.toByteArray()
         if (raw.size < sampleRate / 4) return@withContext null // <~0.25 sn
-        wav(raw, sampleRate)
+        val bytes = wav(raw, sampleRate)
+        // Teşhis: son kaydı diske bırak. Kullanıcı "yanlış duydu" dediğinde
+        // mikrofonun gerçekte ne aldığını dinleyebilmek gerekir; ADB ile
+        // çekilebilir (Android/data/.../files/son_kayit.wav).
+        runCatching {
+            val dir = context.getExternalFilesDir(null) ?: context.filesDir
+            File(dir, "son_kayit.wav").writeBytes(bytes)
+        }
+        VoiceLog.write(
+            "KAYIT",
+            "${raw.size / 32} ms · tepe $maxPeak · ${if (speechStarted) "konuşma" else "sessiz/bitti"}",
+        )
+        bytes
     }
 
     /** PCM'e 44 baytlık WAV başlığı ekler. */
